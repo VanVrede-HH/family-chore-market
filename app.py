@@ -909,12 +909,12 @@ def confirm_payment(kid_id, ledger_id):
 
 
 with app.app_context():
+    db.drop_all()  # Drops old tables to clear schema conflicts on PostgreSQL
     db.create_all()
     if not User.query.first():
         mom = User(name="Mom", role="parent", pin="1234")
         db.session.add(mom)
         db.session.commit()
 
-if __name__ == '__main__'
-    app.run(debug=True, port=5000)
-
+if __name__ == '__main__':
+    app.run(debug=True)
