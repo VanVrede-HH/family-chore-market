@@ -38,7 +38,6 @@ class Ledger(db.Model):
     adult = db.relationship('User', foreign_keys=[adult_id])
     kid = db.relationship('User', foreign_keys=[kid_id])
 
-# Helper function to get or create a ledger entry
 def get_or_create_ledger(adult_id, kid_id):
     ledger = Ledger.query.filter_by(adult_id=adult_id, kid_id=kid_id).first()
     if not ledger:
@@ -48,9 +47,9 @@ def get_or_create_ledger(adult_id, kid_id):
     return ledger
 
 # ---------------------------------------------------------
-# Single Page Template
+# Base HTML Layout
 # ---------------------------------------------------------
-TEMPLATE = """
+BASE_LAYOUT = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -60,7 +59,6 @@ TEMPLATE = """
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-slate-100 text-slate-800 font-sans min-h-screen">
-    <!-- Navigation Bar -->
     <nav class="bg-indigo-600 text-white shadow-md p-4 mb-6 flex justify-between items-center">
         <h1 class="text-xl font-bold">🏡 Family Chore Market</h1>
         <a href="/" class="text-sm bg-indigo-800 hover:bg-indigo-900 px-3 py-1.5 rounded transition">Switch Profile / Home</a>
@@ -77,11 +75,16 @@ TEMPLATE = """
           {% endif %}
         {% endwith %}
 
-        {% block content %}{% endblock %}
+        {{ content|safe }}
     </div>
 </body>
 </html>
 """
+
+def render_page(inner_html, **context):
+    from jinja2 import Template
+    rendered_inner = Template(inner_html).render(**context)
+    return Template(BASE_LAYOUT).render(content=rendered_inner, **context)
 
 # ---------------------------------------------------------
 # Routes
@@ -90,8 +93,7 @@ TEMPLATE = """
 @app.route('/')
 def home():
     users = User.query.all()
-    template = TEMPLATE + """
-    {% block content %}
+    html = """
     <div class="bg-white p-6 rounded-xl shadow-md max-w-lg mx-auto">
         <h2 class="text-2xl font-bold mb-4 text-center text-slate-800">Select Your Profile</h2>
         <div class="space-y-3">
@@ -115,9 +117,8 @@ def home():
             {% endfor %}
         </div>
     </div>
-    {% endblock %}
     """
-    return render_template_string(template, users=users)
+    return render_page(html, users=users)
 
 
 @app.route('/add_user', methods=['POST'])
@@ -141,15 +142,12 @@ def adult_dashboard(user_id):
     if adult.role not in ['parent', 'adult']:
         return redirect(url_for('home'))
 
-    all_users = User.query.all()
     kids = User.query.filter_by(role='kid').all()
     my_chores = Chore.query.filter_by(created_by_id=adult.id).all()
     ledgers = Ledger.query.filter_by(adult_id=adult.id).all()
 
-    template = TEMPLATE + """
-    {% block content %}
+    html = """
     <div class="space-y-6">
-        <!-- Header -->
         <div class="bg-white p-6 rounded-xl shadow-md border-l-4 border-indigo-600 flex justify-between items-center">
             <div>
                 <h2 class="text-2xl font-bold">{{ adult.name }}'s Portal</h2>
@@ -159,7 +157,6 @@ def adult_dashboard(user_id):
         </div>
 
         {% if adult.role == 'parent' %}
-        <!-- Parent Super Admin: Add Household Members -->
         <div class="bg-white p-6 rounded-xl shadow-md">
             <h3 class="font-bold text-slate-800 text-lg mb-3">➕ Add Family Member</h3>
             <form action="/add_user" method="POST" class="flex flex-col sm:flex-row gap-3">
@@ -177,7 +174,6 @@ def adult_dashboard(user_id):
         </div>
         {% endif %}
 
-        <!-- Post a New Chore -->
         <div class="bg-white p-6 rounded-xl shadow-md">
             <h3 class="font-bold text-slate-800 text-lg mb-3">📝 Post a New Chore</h3>
             <form action="/post_chore/{{ adult.id }}" method="POST" class="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -194,7 +190,6 @@ def adult_dashboard(user_id):
             </form>
         </div>
 
-        <!-- Managed Ledgers / Payouts -->
         <div class="bg-white p-6 rounded-xl shadow-md">
             <h3 class="font-bold text-slate-800 text-lg mb-3">💰 Your Kid Ledgers</h3>
             {% if ledgers %}
@@ -230,7 +225,6 @@ def adult_dashboard(user_id):
             {% endif %}
         </div>
 
-        <!-- Posted Chores Status -->
         <div class="bg-white p-6 rounded-xl shadow-md">
             <h3 class="font-bold text-slate-800 text-lg mb-3">📋 Chores Posted by You</h3>
             {% if my_chores %}
@@ -267,9 +261,8 @@ def adult_dashboard(user_id):
             {% endif %}
         </div>
     </div>
-    {% endblock %}
     """
-    return render_template_string(template, adult=adult, kids=kids, my_chores=my_chores, ledgers=ledgers)
+    return render_page(html, adult=adult, kids=kids, my_chores=my_chores, ledgers=ledgers)
 
 
 @app.route('/post_chore/<int:adult_id>', methods=['POST'])
@@ -297,14 +290,10 @@ def kid_dashboard(user_id):
     open_chores = Chore.query.filter_by(status='Open').all()
     my_chores = Chore.query.filter_by(assigned_to_id=kid.id).all()
     ledgers = Ledger.query.filter_by(kid_id=kid.id).all()
-
-    # Determine locked adults due to pending payments
     locked_adult_ids = [l.adult_id for l in ledgers if l.status == 'Pending Confirmation']
 
-    template = TEMPLATE + """
-    {% block content %}
+    html = """
     <div class="space-y-6">
-        <!-- Header -->
         <div class="bg-white p-6 rounded-xl shadow-md border-l-4 border-emerald-500 flex justify-between items-center">
             <div>
                 <h2 class="text-2xl font-bold">{{ kid.name }}'s Portal</h2>
@@ -313,7 +302,179 @@ def kid_dashboard(user_id):
             <span class="bg-emerald-100 text-emerald-700 font-bold px-3 py-1 rounded-full text-xs uppercase">KID</span>
         </div>
 
-        <!-- Pending Confirmations -->
         {% for l in ledgers %}
             {% if l.status == 'Pending Confirmation' %}
-                <div class="
+                <div class="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-r-xl shadow-sm flex flex-col sm:flex-row justify-between items-center gap-3">
+                    <div>
+                        <h4 class="font-bold text-amber-800">Payout Pending Confirmation</h4>
+                        <p class="text-xs text-amber-700">
+                            <strong>{{ l.adult.name }}</strong> marked <strong>R{{ "%.2f"|format(l.pending_payout) }}</strong> as paid. Please confirm receipt.
+                        </p>
+                    </div>
+                    <form action="/confirm_payment/{{ kid.id }}/{{ l.id }}" method="POST">
+                        <button type="submit" class="bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold px-4 py-2 rounded-lg transition">
+                            Confirm Received
+                        </button>
+                    </form>
+                </div>
+            {% endif %}
+        {% endfor %}
+
+        <div class="bg-white p-6 rounded-xl shadow-md">
+            <h3 class="font-bold text-slate-800 text-lg mb-3">💵 Your Earnings by Funder</h3>
+            {% if ledgers %}
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {% for l in ledgers %}
+                        <div class="border p-3 rounded-lg flex justify-between items-center">
+                            <span class="font-semibold text-slate-700">{{ l.adult.name }}</span>
+                            <span class="font-bold text-emerald-600 text-lg">R{{ "%.2f"|format(l.amount_due) }}</span>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <p class="text-slate-500 text-sm italic">No balances recorded yet.</p>
+            {% endif %}
+        </div>
+
+        <div class="bg-white p-6 rounded-xl shadow-md">
+            <h3 class="font-bold text-slate-800 text-lg mb-3">🛒 Open Chore Market</h3>
+            {% if open_chores %}
+                <div class="space-y-3">
+                    {% for c in open_chores %}
+                        <div class="border p-3 rounded-lg flex justify-between items-center">
+                            <div>
+                                <h4 class="font-bold text-slate-800">{{ c.title }}</h4>
+                                <p class="text-xs text-slate-500">
+                                    Posted by: <strong class="text-indigo-600">{{ c.creator.name }}</strong> | Reward: <strong class="text-emerald-600">R{{ "%.2f"|format(c.reward) }}</strong>
+                                </p>
+                            </div>
+                            <div>
+                                {% if c.created_by_id in locked_adult_ids %}
+                                    <span class="text-xs font-bold text-red-500 bg-red-50 px-2.5 py-1 rounded">
+                                        Blocked (Confirm Pending Payment First)
+                                    </span>
+                                {% else %}
+                                    <form action="/claim_chore/{{ kid.id }}/{{ c.id }}" method="POST">
+                                        <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3 py-1.5 rounded transition">
+                                            Claim Chore
+                                        </button>
+                                    </form>
+                                {% endif %}
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <p class="text-slate-500 text-sm italic">No open chores available right now.</p>
+            {% endif %}
+        </div>
+
+        <div class="bg-white p-6 rounded-xl shadow-md">
+            <h3 class="font-bold text-slate-800 text-lg mb-3">📌 My Claimed Chores</h3>
+            {% if my_chores %}
+                <div class="space-y-3">
+                    {% for c in my_chores %}
+                        <div class="border p-3 rounded-lg flex justify-between items-center">
+                            <div>
+                                <h4 class="font-bold text-slate-800">{{ c.title }}</h4>
+                                <p class="text-xs text-slate-500">
+                                    Funder: {{ c.creator.name }} | R{{ "%.2f"|format(c.reward) }}
+                                </p>
+                            </div>
+                            <div>
+                                {% if c.status == 'Open' %}
+                                    <form action="/complete_chore/{{ kid.id }}/{{ c.id }}" method="POST">
+                                        <button type="submit" class="bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold px-3 py-1.5 rounded transition">
+                                            Mark Done
+                                        </button>
+                                    </form>
+                                {% else %}
+                                    <span class="px-2.5 py-1 text-xs rounded-full font-bold
+                                        {% if c.status == 'Pending Verification' %}bg-amber-100 text-amber-700
+                                        {% else %}bg-green-100 text-green-700{% endif %}">
+                                        {{ c.status }}
+                                    </span>
+                                {% endif %}
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <p class="text-slate-500 text-sm italic">You haven't claimed any chores yet.</p>
+            {% endif %}
+        </div>
+    </div>
+    """
+    return render_page(html, kid=kid, open_chores=open_chores, my_chores=my_chores, ledgers=ledgers, locked_adult_ids=locked_adult_ids)
+
+
+@app.route('/claim_chore/<int:kid_id>/<int:chore_id>', methods=['POST'])
+def claim_chore(kid_id, chore_id):
+    chore = Chore.query.get_or_404(chore_id)
+    ledger = Ledger.query.filter_by(adult_id=chore.created_by_id, kid_id=kid_id).first()
+    
+    if ledger and ledger.status == 'Pending Confirmation':
+        flash("You must confirm your pending payment from this adult before claiming more chores from them!", "error")
+        return redirect(url_for('kid_dashboard', user_id=kid_id))
+
+    if chore.status == 'Open':
+        chore.assigned_to_id = kid_id
+        db.session.commit()
+        flash("Chore claimed!", "success")
+    return redirect(url_for('kid_dashboard', user_id=kid_id))
+
+
+@app.route('/complete_chore/<int:kid_id>/<int:chore_id>', methods=['POST'])
+def complete_chore(kid_id, chore_id):
+    chore = Chore.query.get_or_404(chore_id)
+    if chore.assigned_to_id == kid_id and chore.status == 'Open':
+        chore.status = 'Pending Verification'
+        db.session.commit()
+        flash("Chore submitted for adult verification!", "success")
+    return redirect(url_for('kid_dashboard', user_id=kid_id))
+
+
+@app.route('/verify_chore/<int:adult_id>/<int:chore_id>', methods=['POST'])
+def verify_chore(adult_id, chore_id):
+    chore = Chore.query.get_or_404(chore_id)
+    if chore.created_by_id == adult_id and chore.status == 'Pending Verification':
+        chore.status = 'Completed'
+        ledger = get_or_create_ledger(adult_id=adult_id, kid_id=chore.assigned_to_id)
+        ledger.amount_due += chore.reward
+        db.session.commit()
+        flash("Chore verified! Ledger balance updated.", "success")
+    return redirect(url_for('adult_dashboard', user_id=adult_id))
+
+
+@app.route('/pay_kid/<int:adult_id>/<int:kid_id>', methods=['POST'])
+def pay_kid(adult_id, kid_id):
+    ledger = Ledger.query.filter_by(adult_id=adult_id, kid_id=kid_id).first()
+    if ledger and ledger.amount_due > 0:
+        ledger.pending_payout = ledger.amount_due
+        ledger.amount_due = 0.0
+        ledger.status = 'Pending Confirmation'
+        db.session.commit()
+        flash("Payout initiated. Waiting for kid to confirm receipt on their portal.", "success")
+    return redirect(url_for('adult_dashboard', user_id=adult_id))
+
+
+@app.route('/confirm_payment/<int:kid_id>/<int:ledger_id>', methods=['POST'])
+def confirm_payment(kid_id, ledger_id):
+    ledger = Ledger.query.get_or_404(ledger_id)
+    if ledger.kid_id == kid_id and ledger.status == 'Pending Confirmation':
+        ledger.pending_payout = 0.0
+        ledger.status = 'Settled'
+        db.session.commit()
+        flash("Payment receipt confirmed! Ledger is settled.", "success")
+    return redirect(url_for('kid_dashboard', user_id=kid_id))
+
+
+with app.app_context():
+    db.create_all()
+    if not User.query.first():
+        mom = User(name="Mom", role="parent")
+        db.session.add(mom)
+        db.session.commit()
+
+if __name__ == '__main__':
+    app.run(debug=True)
