@@ -34,7 +34,7 @@ class Chore(db.Model):
     reward = db.Column(db.Float, nullable=False)
     funder_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     assigned_to = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
-    status = db.Column(db.String(20), default='Open')  # Open, Claimed, Verification Requested, Completed, Penalty Applied
+    status = db.Column(db.String(20), default='Open')  # Open, Claimed, Verification Requested, Completed
     due_date = db.Column(db.DateTime, nullable=True)
     grace_period_days = db.Column(db.Integer, default=1)
     penalty_rate = db.Column(db.Float, default=0.10)
@@ -210,7 +210,7 @@ HTML_TEMPLATE = """
                     </div>
                 </div>
                 {% else %}
-                <p class="text-slate-400 text-sm italic">No active chores available at the moment.</p>
+                <p class="text-slate-400 text-sm italic">No chores match your view at the moment.</p>
                 {% endfor %}
             </div>
         </div>
@@ -275,7 +275,6 @@ def initialize_system():
     if not SystemConfig.query.first():
         db.session.add(SystemConfig(penalty_rate=0.10, grace_period_days=1))
     if not User.query.first():
-        # Default profiles
         db.session.add(User(name="Mom", role="Parent", pin="1234", balance=0.0))
         db.session.add(User(name="Dad", role="Parent", pin="1234", balance=0.0))
         db.session.add(User(name="Kid 1", role="Kid", pin="0000", balance=0.0))
@@ -288,8 +287,18 @@ def index():
     users = User.query.all()
     current_user = User.query.get(session.get('user_id')) if session.get('user_id') else None
     leaderboard = User.query.order_by(User.balance.desc()).all()
-    chores = Chore.query.all()
     config = SystemConfig.query.first()
+    
+    # Visibility Logic
+    if not current_user:
+        chores = []
+    elif current_user.role == 'Parent':
+        chores = Chore.query.all()
+    elif current_user.role == 'Adult':
+        chores = Chore.query.filter((Chore.funder_id == current_user.id) | (Chore.assigned_to == current_user.id)).all()
+    else:  # Kid
+        chores = Chore.query.filter((Chore.status == 'Open') | (Chore.assigned_to == current_user.id)).all()
+        
     return render_template_string(HTML_TEMPLATE, users=users, current_user=current_user, leaderboard=leaderboard, chores=chores, config=config)
 
 @app.route('/login', methods=['POST'])
@@ -363,7 +372,6 @@ def verify_chore(chore_id):
     if chore and chore.status == 'Verification Requested':
         worker = User.query.get(chore.assigned_to)
         
-        # Calculate late penalty rounded to nearest Rand
         final_reward = chore.reward
         if chore.due_date and datetime.now() > (chore.due_date + timedelta(days=chore.grace_period_days)):
             penalty = round(chore.reward * chore.penalty_rate)
@@ -373,7 +381,6 @@ def verify_chore(chore_id):
         worker.balance += final_reward
         chore.status = 'Completed'
         
-        # Log to ledger
         db.session.add(Ledger(
             from_user_id=chore.funder_id,
             to_user_id=worker.id,
