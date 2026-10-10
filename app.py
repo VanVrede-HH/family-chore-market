@@ -223,7 +223,7 @@ def verify_pin(user_id):
         return redirect(url_for('dashboard', user_id=user.id))
     else:
         flash("Incorrect PIN. Please try again.", "error")
-        return redirect(url_for('access_profile', user_id=user_id))
+        return redirect(url_for('access_profile', user_id=user.id))
 
 
 @app.route('/dashboard/<int:user_id>')
@@ -360,6 +360,11 @@ def adult_portal(adult):
     release_hours = get_setting('release_hours', '1')
     leaderboard_days = get_setting('leaderboard_days', '7')
 
+    # Build mailto string for email backup summary
+    ledger_text = f"Family Chore Market - Ledger Summary for {adult.name}%0A%0A"
+    for l in ledgers:
+        ledger_text += f"- {l.kid.name}: R{l.amount_due:.2f} unpaid (Status: {l.status})%0A"
+
     filter_period = request.args.get('filter_period', 'all')
     audit_query = Chore.query.filter(Chore.status == 'Completed')
     if filter_period == '7days':
@@ -398,9 +403,15 @@ def adult_portal(adult):
 
         <div class="bg-white p-6 rounded-xl shadow-md border border-indigo-100">
             <h3 class="font-bold text-slate-800 text-lg mb-2">💾 Data Backup & Recovery</h3>
-            <a href="/export_backup" class="inline-block bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">
-                ⬇️ Download JSON Backup
-            </a>
+            <p class="text-slate-500 text-sm mb-4">Download a local JSON backup or share your active ledger summary via email.</p>
+            <div class="flex flex-wrap gap-3">
+                <a href="/export_backup" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">
+                    ⬇️ Download JSON Backup
+                </a>
+                <a href="mailto:?subject=Family%20Chore%20Market%20Ledger%20Summary&body={{ ledger_text }}" class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">
+                    📧 Email Ledger Summary
+                </a>
+            </div>
         </div>
 
         <div class="bg-white p-6 rounded-xl shadow-md">
@@ -578,7 +589,7 @@ def adult_portal(adult):
         </div>
     </div>
     """
-    return render_page(html, adult=adult, kids=kids, all_users=all_users, my_chores=my_chores, ledgers=ledgers, release_hours=release_hours, leaderboard_days=leaderboard_days, audit_chores=audit_chores, filter_period=filter_period)
+    return render_page(html, adult=adult, kids=kids, all_users=all_users, my_chores=my_chores, ledgers=ledgers, release_hours=release_hours, leaderboard_days=leaderboard_days, audit_chores=audit_chores, filter_period=filter_period, ledger_text=ledger_text)
 
 
 def kid_portal(kid):
