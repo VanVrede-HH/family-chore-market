@@ -449,6 +449,7 @@ def adult_portal(adult):
 
     html = """
     <div class="space-y-6">
+        <!-- 1. Header Section -->
         <div class="bg-white p-6 rounded-xl shadow-md border-l-4 border-indigo-600 flex justify-between items-center">
             <div>
                 <h2 class="text-2xl font-bold">{{ adult.name }}'s Portal</h2>
@@ -457,107 +458,7 @@ def adult_portal(adult):
             <span class="bg-indigo-100 text-indigo-700 font-bold px-3 py-1 rounded-full text-xs uppercase">{{ adult.role }}</span>
         </div>
 
-        {% if adult.role == 'parent' %}
-        <div class="bg-white p-6 rounded-xl shadow-md border border-indigo-100">
-            <h3 class="font-bold text-slate-800 text-lg mb-2">⚙️ Platform Variables, Penalties & Loan Interest</h3>
-            <form action="/update_settings" method="POST" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                    <label class="block text-xs font-semibold text-slate-600 mb-1">Kid Release Buffer (Hours)</label>
-                    <input type="number" step="0.5" name="release_hours" value="{{ release_hours }}" required class="border border-slate-300 p-2 rounded-lg w-full text-sm">
-                </div>
-                <div>
-                    <label class="block text-xs font-semibold text-slate-600 mb-1">Leaderboard Period (Days)</label>
-                    <input type="number" name="leaderboard_days" value="{{ leaderboard_days }}" required class="border border-slate-300 p-2 rounded-lg w-full text-sm">
-                </div>
-                <div>
-                    <label class="block text-xs font-semibold text-slate-600 mb-1">Late Penalty Grace Period (Hours)</label>
-                    <input type="number" step="0.5" name="penalty_grace_hours" value="{{ penalty_grace_hours }}" required class="border border-slate-300 p-2 rounded-lg w-full text-sm">
-                </div>
-                <div>
-                    <label class="block text-xs font-semibold text-slate-600 mb-1">Late Penalty Rate (%)</label>
-                    <input type="number" step="1" name="penalty_percent" value="{{ penalty_percent }}" required class="border border-slate-300 p-2 rounded-lg w-full text-sm">
-                </div>
-                <div class="sm:col-span-2">
-                    <label class="block text-xs font-semibold text-slate-600 mb-1">Daily Negative Balance Interest Rate (%) e.g. 0.05</label>
-                    <input type="number" step="0.001" name="daily_interest_percent" value="{{ daily_interest_percent }}" required class="border border-slate-300 p-2 rounded-lg w-full text-sm">
-                </div>
-                <div class="sm:col-span-2">
-                    <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-lg text-sm transition w-full sm:w-auto">
-                        Save Rules & Variables
-                    </button>
-                </div>
-            </form>
-        </div>
-
-        <div class="bg-white p-6 rounded-xl shadow-md border border-indigo-100">
-            <h3 class="font-bold text-slate-800 text-lg mb-2">💾 Data Backup & Recovery</h3>
-            <p class="text-slate-500 text-sm mb-4">Download a local JSON backup, restore from a backup file, or share your ledger summary via email.</p>
-            <div class="flex flex-wrap gap-3 items-center">
-                <a href="/export_backup" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">
-                    ⬇️ Download JSON Backup
-                </a>
-                <a href="mailto:?subject=Family%20Chore%20Market%20Ledger%20Summary&body={{ ledger_text }}" class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">
-                    📧 Email Ledger Summary
-                </a>
-            </div>
-            <form action="/upload_backup" method="POST" enctype="multipart/form-data" class="mt-4 pt-4 border-t flex flex-col sm:flex-row gap-2 items-center">
-                <input type="file" name="backup_file" accept=".json" required class="text-xs text-slate-500 file:mr-2 file:py-1.5 file:px-3 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200 flex-grow">
-                <button type="submit" class="bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold px-4 py-2 rounded transition">
-                    🔄 Restore Backup
-                </button>
-            </form>
-        </div>
-
-        <div class="bg-white p-6 rounded-xl shadow-md">
-            <h3 class="font-bold text-slate-800 text-lg mb-3">➕ Add Family Member</h3>
-            <form action="/add_user" method="POST" class="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                <input type="text" name="name" placeholder="Name (e.g. Granny)" required 
-                       class="border border-slate-300 p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                <select name="role" class="border border-slate-300 p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                    <option value="kid">Kid</option>
-                    <option value="adult">Adult / Funder</option>
-                    <option value="parent">Parent (Admin)</option>
-                </select>
-                <input type="text" name="pin" placeholder="Optional PIN" 
-                       class="border border-slate-300 p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-lg transition">
-                    Add Member
-                </button>
-            </form>
-        </div>
-
-        <div class="bg-white p-6 rounded-xl shadow-md">
-            <h3 class="font-bold text-slate-800 text-lg mb-3">🔑 Manage Household PINs</h3>
-            <div class="divide-y">
-                {% for u in all_users %}
-                    <div class="py-2 flex justify-between items-center">
-                        <span class="font-semibold text-slate-700">{{ u.name }} <span class="text-xs text-slate-400">({{ u.role }})</span></span>
-                        <form action="/update_pin/{{ u.id }}" method="POST" class="flex gap-2">
-                            <input type="text" name="new_pin" value="{{ u.pin }}" placeholder="New PIN" 
-                                   class="border border-slate-300 p-1 text-sm rounded w-24 focus:outline-none focus:ring-1 focus:ring-indigo-500">
-                            <button type="submit" class="bg-slate-800 hover:bg-slate-900 text-white text-xs px-3 py-1 rounded transition">
-                                Update PIN
-                            </button>
-                        </form>
-                    </div>
-                {% endfor %}
-            </div>
-        </div>
-        {% endif %}
-
-        {% if adult.role != 'parent' %}
-        <div class="bg-white p-6 rounded-xl shadow-md">
-            <h3 class="font-bold text-slate-800 text-lg mb-3">🔒 Change Your PIN</h3>
-            <form action="/update_pin/{{ adult.id }}" method="POST" class="flex gap-3">
-                <input type="text" name="new_pin" value="{{ adult.pin }}" placeholder="Enter new PIN" required
-                       class="border border-slate-300 p-2 rounded-lg flex-grow focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-lg transition">
-                    Save PIN
-                </button>
-            </form>
-        </div>
-        {% endif %}
-
+        <!-- 2. Post a New Chore -->
         <div class="bg-white p-6 rounded-xl shadow-md">
             <h3 class="font-bold text-slate-800 text-lg mb-3">📝 Post a New Chore (with Recurring Options)</h3>
             <form action="/post_chore/{{ adult.id }}" method="POST" class="space-y-4">
@@ -597,52 +498,10 @@ def adult_portal(adult):
             </form>
         </div>
 
-        <div class="bg-white p-6 rounded-xl shadow-md">
-            <h3 class="font-bold text-slate-800 text-lg mb-3">💰 Kid Ledgers, Payouts & Pocket Money Loans</h3>
-            {% if ledgers %}
-                <div class="divide-y">
-                    {% for l in ledgers %}
-                        <div class="py-3 flex flex-col sm:flex-row justify-between items-center gap-3">
-                            <div>
-                                <span class="font-semibold text-slate-800">{{ l.kid.name }}</span>
-                                <div class="text-sm text-slate-500">
-                                    Balance / Owed: <span class="font-bold {% if l.amount_due < 0 %}text-red-600{% else %}text-emerald-600{% endif %}">R{{ "%.2f"|format(l.amount_due) }}</span>
-                                </div>
-                                <form action="/adjust_ledger/{{ l.id }}" method="POST" class="mt-1 flex items-center gap-2">
-                                    <span class="text-xs text-slate-500">Manual Override R:</span>
-                                    <input type="number" step="1" name="amount_due" value="{{ l.amount_due }}" 
-                                           class="border border-slate-300 p-1 text-xs rounded w-24 focus:outline-none focus:ring-1 focus:ring-indigo-500">
-                                    <button type="submit" class="bg-slate-700 hover:bg-slate-800 text-white text-xs px-2.5 py-1 rounded transition">
-                                        Set Balance
-                                    </button>
-                                </form>
-                            </div>
-                            <div>
-                                {% if l.status == 'Pending Confirmation' %}
-                                    <span class="bg-amber-100 text-amber-700 px-3 py-1 rounded-lg text-xs font-bold">
-                                        Pending Confirmation (R{{ "%.2f"|format(l.pending_payout) }})
-                                    </span>
-                                {% else %}
-                                    <form action="/pay_kid/{{ adult.id }}/{{ l.kid.id }}" method="POST" class="flex items-center gap-2">
-                                        <input type="number" step="1" min="1" name="payout_amount" placeholder="Amount R" required
-                                               class="border border-slate-300 p-1.5 text-xs rounded w-24 focus:outline-none focus:ring-1 focus:ring-indigo-500">
-                                        <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition">
-                                            Pay / Advance Loan
-                                        </button>
-                                    </form>
-                                {% endif %}
-                            </div>
-                        </div>
-                    {% endfor %}
-                </div>
-            {% else %}
-                <p class="text-slate-500 text-sm italic">No active ledgers yet.</p>
-            {% endif %}
-        </div>
-
+        <!-- 3. Uncompleted & Active Chores -->
         <div class="bg-white p-6 rounded-xl shadow-md">
             <h3 class="font-bold text-slate-800 text-lg mb-3">
-                📋 Uncompleted Chores {% if adult.role == 'parent' %}(All Household){% else %}(Posted by You){% endif %}
+                📋 Active & Uncompleted Chores {% if adult.role == 'parent' %}(All Household){% else %}(Posted by You){% endif %}
             </h3>
             {% if uncompleted_chores %}
                 <div class="space-y-4">
@@ -717,6 +576,156 @@ def adult_portal(adult):
             {% endif %}
         </div>
 
+        <!-- 4. Kid Ledgers & Payouts -->
+        <div class="bg-white p-6 rounded-xl shadow-md">
+            <h3 class="font-bold text-slate-800 text-lg mb-3">💰 Kid Ledgers, Payouts & Pocket Money Loans</h3>
+            {% if ledgers %}
+                <div class="divide-y">
+                    {% for l in ledgers %}
+                        <div class="py-3 flex flex-col sm:flex-row justify-between items-center gap-3">
+                            <div>
+                                <span class="font-semibold text-slate-800">{{ l.kid.name }}</span>
+                                <div class="text-sm text-slate-500">
+                                    Balance / Owed: <span class="font-bold {% if l.amount_due < 0 %}text-red-600{% else %}text-emerald-600{% endif %}">R{{ "%.2f"|format(l.amount_due) }}</span>
+                                </div>
+                                <form action="/adjust_ledger/{{ l.id }}" method="POST" class="mt-1 flex items-center gap-2">
+                                    <span class="text-xs text-slate-500">Manual Override R:</span>
+                                    <input type="number" step="1" name="amount_due" value="{{ l.amount_due }}" 
+                                           class="border border-slate-300 p-1 text-xs rounded w-24 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                                    <button type="submit" class="bg-slate-700 hover:bg-slate-800 text-white text-xs px-2.5 py-1 rounded transition">
+                                        Set Balance
+                                    </button>
+                                </form>
+                            </div>
+                            <div>
+                                {% if l.status == 'Pending Confirmation' %}
+                                    <span class="bg-amber-100 text-amber-700 px-3 py-1 rounded-lg text-xs font-bold">
+                                        Pending Confirmation (R{{ "%.2f"|format(l.pending_payout) }})
+                                    </span>
+                                {% else %}
+                                    <form action="/pay_kid/{{ adult.id }}/{{ l.kid.id }}" method="POST" class="flex items-center gap-2">
+                                        <input type="number" step="1" min="1" name="payout_amount" placeholder="Amount R" required
+                                               class="border border-slate-300 p-1.5 text-xs rounded w-24 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                                        <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition">
+                                            Pay / Advance Loan
+                                        </button>
+                                    </form>
+                                {% endif %}
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <p class="text-slate-500 text-sm italic">No active ledgers yet.</p>
+            {% endif %}
+        </div>
+
+        <!-- 5. Platform Variables & Settings (Admin Section) -->
+        {% if adult.role == 'parent' %}
+        <div class="bg-white p-6 rounded-xl shadow-md border border-indigo-100">
+            <h3 class="font-bold text-slate-800 text-lg mb-2">⚙️ Platform Variables, Penalties & Loan Interest</h3>
+            <form action="/update_settings" method="POST" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">Kid Release Buffer (Hours)</label>
+                    <input type="number" step="0.5" name="release_hours" value="{{ release_hours }}" required class="border border-slate-300 p-2 rounded-lg w-full text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">Leaderboard Period (Days)</label>
+                    <input type="number" name="leaderboard_days" value="{{ leaderboard_days }}" required class="border border-slate-300 p-2 rounded-lg w-full text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">Late Penalty Grace Period (Hours)</label>
+                    <input type="number" step="0.5" name="penalty_grace_hours" value="{{ penalty_grace_hours }}" required class="border border-slate-300 p-2 rounded-lg w-full text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">Late Penalty Rate (%)</label>
+                    <input type="number" step="1" name="penalty_percent" value="{{ penalty_percent }}" required class="border border-slate-300 p-2 rounded-lg w-full text-sm">
+                </div>
+                <div class="sm:col-span-2">
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">Daily Negative Balance Interest Rate (%) e.g. 0.05</label>
+                    <input type="number" step="0.001" name="daily_interest_percent" value="{{ daily_interest_percent }}" required class="border border-slate-300 p-2 rounded-lg w-full text-sm">
+                </div>
+                <div class="sm:col-span-2">
+                    <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-lg text-sm transition w-full sm:w-auto">
+                        Save Rules & Variables
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <!-- 6. Data Backup & Recovery -->
+        <div class="bg-white p-6 rounded-xl shadow-md border border-indigo-100">
+            <h3 class="font-bold text-slate-800 text-lg mb-2">💾 Data Backup & Recovery</h3>
+            <p class="text-slate-500 text-sm mb-4">Download a local JSON backup, restore from a backup file, or share your ledger summary via email.</p>
+            <div class="flex flex-wrap gap-3 items-center">
+                <a href="/export_backup" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">
+                    ⬇️ Download JSON Backup
+                </a>
+                <a href="mailto:?subject=Family%20Chore%20Market%20Ledger%20Summary&body={{ ledger_text }}" class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">
+                    📧 Email Ledger Summary
+                </a>
+            </div>
+            <form action="/upload_backup" method="POST" enctype="multipart/form-data" class="mt-4 pt-4 border-t flex flex-col sm:flex-row gap-2 items-center">
+                <input type="file" name="backup_file" accept=".json" required class="text-xs text-slate-500 file:mr-2 file:py-1.5 file:px-3 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200 flex-grow">
+                <button type="submit" class="bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold px-4 py-2 rounded transition">
+                    🔄 Restore Backup
+                </button>
+            </form>
+        </div>
+
+        <!-- 7. Add Family Member -->
+        <div class="bg-white p-6 rounded-xl shadow-md">
+            <h3 class="font-bold text-slate-800 text-lg mb-3">➕ Add Family Member</h3>
+            <form action="/add_user" method="POST" class="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                <input type="text" name="name" placeholder="Name (e.g. Granny)" required 
+                       class="border border-slate-300 p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                <select name="role" class="border border-slate-300 p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    <option value="kid">Kid</option>
+                    <option value="adult">Adult / Funder</option>
+                    <option value="parent">Parent (Admin)</option>
+                </select>
+                <input type="text" name="pin" placeholder="Optional PIN" 
+                       class="border border-slate-300 p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-lg transition">
+                    Add Member
+                </button>
+            </form>
+        </div>
+
+        <!-- 8. Manage Household PINs -->
+        <div class="bg-white p-6 rounded-xl shadow-md">
+            <h3 class="font-bold text-slate-800 text-lg mb-3">🔑 Manage Household PINs</h3>
+            <div class="divide-y">
+                {% for u in all_users %}
+                    <div class="py-2 flex justify-between items-center">
+                        <span class="font-semibold text-slate-700">{{ u.name }} <span class="text-xs text-slate-400">({{ u.role }})</span></span>
+                        <form action="/update_pin/{{ u.id }}" method="POST" class="flex gap-2">
+                            <input type="text" name="new_pin" value="{{ u.pin }}" placeholder="New PIN" 
+                                   class="border border-slate-300 p-1 text-sm rounded w-24 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                            <button type="submit" class="bg-slate-800 hover:bg-slate-900 text-white text-xs px-3 py-1 rounded transition">
+                                Update PIN
+                            </button>
+                        </form>
+                    </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% if adult.role != 'parent' %}
+        <div class="bg-white p-6 rounded-xl shadow-md">
+            <h3 class="font-bold text-slate-800 text-lg mb-3">🔒 Change Your PIN</h3>
+            <form action="/update_pin/{{ adult.id }}" method="POST" class="flex gap-3">
+                <input type="text" name="new_pin" value="{{ adult.pin }}" placeholder="Enter new PIN" required
+                       class="border border-slate-300 p-2 rounded-lg flex-grow focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-lg transition">
+                    Save PIN
+                </button>
+            </form>
+        </div>
+        {% endif %}
+
+        <!-- 9. Audit Log (Moved to the very end) -->
         <div class="bg-white p-6 rounded-xl shadow-md">
             <div class="flex flex-col sm:flex-row justify-between items-center mb-4 gap-3">
                 <h3 class="font-bold text-slate-800 text-lg">📜 Verified Chores Audit Log</h3>
@@ -776,6 +785,7 @@ def kid_portal(kid):
 
     html = """
     <div class="space-y-6">
+        <!-- 1. Header Section -->
         <div class="bg-white p-6 rounded-xl shadow-md border-l-4 border-emerald-500 flex justify-between items-center">
             <div>
                 <h2 class="text-2xl font-bold">{{ kid.name }}'s Portal</h2>
@@ -784,17 +794,7 @@ def kid_portal(kid):
             <span class="bg-emerald-100 text-emerald-700 font-bold px-3 py-1 rounded-full text-xs uppercase">KID</span>
         </div>
 
-        <div class="bg-white p-6 rounded-xl shadow-md">
-            <h3 class="font-bold text-slate-800 text-lg mb-3">🔒 Change Your PIN</h3>
-            <form action="/update_pin/{{ kid.id }}" method="POST" class="flex gap-3">
-                <input type="text" name="new_pin" value="{{ kid.pin }}" placeholder="Enter new PIN" required
-                       class="border border-slate-300 p-2 rounded-lg flex-grow focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                <button type="submit" class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-4 py-2 rounded-lg transition">
-                    Save PIN
-                </button>
-            </form>
-        </div>
-
+        <!-- 2. Pending Confirmations (if any) -->
         {% for l in ledgers %}
             {% if l.status == 'Pending Confirmation' %}
                 <div class="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-r-xl shadow-sm flex flex-col sm:flex-row justify-between items-center gap-3">
@@ -813,45 +813,49 @@ def kid_portal(kid):
             {% endif %}
         {% endfor %}
 
+        <!-- 3. My Claimed Chores -->
         <div class="bg-white p-6 rounded-xl shadow-md">
-            <h3 class="font-bold text-slate-800 text-lg mb-3">💵 Your Balances by Funder</h3>
-            {% if ledgers %}
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {% for l in ledgers %}
+            <h3 class="font-bold text-slate-800 text-lg mb-3">📌 My Claimed Chores</h3>
+            {% if my_chores %}
+                <div class="space-y-3">
+                    {% for c in my_chores %}
                         <div class="border p-3 rounded-lg flex justify-between items-center">
-                            <span class="font-semibold text-slate-700">{{ l.adult.name }}</span>
-                            <span class="font-bold text-lg {% if l.amount_due < 0 %}text-red-600{% else %}text-emerald-600{% endif %}">
-                                R{{ "%.2f"|format(l.amount_due) }}
-                            </span>
+                            <div>
+                                <h4 class="font-bold text-slate-800">{{ c.title }}</h4>
+                                <p class="text-xs text-slate-500">
+                                    Funder: {{ c.creator.name }} | R{{ "%.2f"|format(c.reward) }} | 
+                                    Due: {{ c.due_date.strftime('%a %H:%M') if c.due_date else 'Flexible' }}
+                                </p>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                {% if c.status == 'Claimed' %}
+                                    <form action="/complete_chore/{{ kid.id }}/{{ c.id }}" method="POST">
+                                        <button type="submit" class="bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold px-3 py-1.5 rounded transition">
+                                            Mark Done
+                                        </button>
+                                    </form>
+                                    <form action="/release_chore/{{ kid.id }}/{{ c.id }}" method="POST" onsubmit="return confirm('Releasing this chore will deduct a penalty from your ledger balance. Proceed?');">
+                                        <button type="submit" class="bg-red-500 hover:bg-red-600 text-white text-xs font-bold px-3 py-1.5 rounded transition" title="Release chore and incur penalty">
+                                            {% if c.is_within_buffer %}Release (Free){% else %}Release (Penalty){% endif %}
+                                        </button>
+                                    </form>
+                                {% else %}
+                                    <span class="px-2.5 py-1 text-xs rounded-full font-bold
+                                        {% if c.status == 'Pending Verification' %}bg-amber-100 text-amber-700
+                                        {% else %}bg-green-100 text-green-700{% endif %}">
+                                        {{ c.status }}
+                                    </span>
+                                {% endif %}
+                            </div>
                         </div>
                     {% endfor %}
                 </div>
             {% else %}
-                <p class="text-slate-500 text-sm italic">No balances recorded yet.</p>
+                <p class="text-slate-500 text-sm italic">You haven't claimed any chores yet.</p>
             {% endif %}
         </div>
 
-        {% if penalty_logs %}
-        <div class="bg-red-50 border-l-4 border-red-500 p-6 rounded-r-xl shadow-md">
-            <h3 class="font-bold text-red-800 text-lg mb-2">⚠️ Penalty / Release Log</h3>
-            <p class="text-xs text-red-600 mb-3">Penalties applied to your ledger balance for released or overdue chores:</p>
-            <div class="divide-y divide-red-200 text-xs">
-                {% for pl in penalty_logs %}
-                    <div class="py-2 flex justify-between items-center">
-                        <div>
-                            <span class="font-bold text-red-800">{{ pl.chore_title }}</span>
-                            <div class="text-red-600 text-2xs">{{ pl.reason }} (Funder: {{ pl.adult.name }})</div>
-                        </div>
-                        <div class="text-right font-bold text-red-700 text-sm">
-                            -R{{ "%.2f"|format(pl.penalty_amount) }}
-                            <div class="text-2xs text-red-400 font-normal">{{ pl.created_at.strftime('%d %b %H:%M') }}</div>
-                        </div>
-                    </div>
-                {% endfor %}
-            </div>
-        </div>
-        {% endif %}
-
+        <!-- 4. All Uncompleted Household Chores -->
         <div class="bg-white p-6 rounded-xl shadow-md">
             <h3 class="font-bold text-slate-800 text-lg mb-3">🛒 All Uncompleted Household Chores</h3>
             {% if uncompleted_chores %}
@@ -906,46 +910,58 @@ def kid_portal(kid):
             {% endif %}
         </div>
 
+        <!-- 5. Wallets / Balances -->
         <div class="bg-white p-6 rounded-xl shadow-md">
-            <h3 class="font-bold text-slate-800 text-lg mb-3">📌 My Claimed Chores</h3>
-            {% if my_chores %}
-                <div class="space-y-3">
-                    {% for c in my_chores %}
+            <h3 class="font-bold text-slate-800 text-lg mb-3">💵 Your Balances by Funder</h3>
+            {% if ledgers %}
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {% for l in ledgers %}
                         <div class="border p-3 rounded-lg flex justify-between items-center">
-                            <div>
-                                <h4 class="font-bold text-slate-800">{{ c.title }}</h4>
-                                <p class="text-xs text-slate-500">
-                                    Funder: {{ c.creator.name }} | R{{ "%.2f"|format(c.reward) }} | 
-                                    Due: {{ c.due_date.strftime('%a %H:%M') if c.due_date else 'Flexible' }}
-                                </p>
-                            </div>
-                            <div class="flex items-center gap-2">
-                                {% if c.status == 'Claimed' %}
-                                    <form action="/complete_chore/{{ kid.id }}/{{ c.id }}" method="POST">
-                                        <button type="submit" class="bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold px-3 py-1.5 rounded transition">
-                                            Mark Done
-                                        </button>
-                                    </form>
-                                    <form action="/release_chore/{{ kid.id }}/{{ c.id }}" method="POST" onsubmit="return confirm('Releasing this chore will deduct a penalty from your ledger balance. Proceed?');">
-                                        <button type="submit" class="bg-red-500 hover:bg-red-600 text-white text-xs font-bold px-3 py-1.5 rounded transition" title="Release chore and incur penalty">
-                                            {% if c.is_within_buffer %}Release (Free){% else %}Release (Penalty){% endif %}
-                                        </button>
-                                    </form>
-                                {% else %}
-                                    <span class="px-2.5 py-1 text-xs rounded-full font-bold
-                                        {% if c.status == 'Pending Verification' %}bg-amber-100 text-amber-700
-                                        {% else %}bg-green-100 text-green-700{% endif %}">
-                                        {{ c.status }}
-                                    </span>
-                                {% endif %}
-                            </div>
+                            <span class="font-semibold text-slate-700">{{ l.adult.name }}</span>
+                            <span class="font-bold text-lg {% if l.amount_due < 0 %}text-red-600{% else %}text-emerald-600{% endif %}">
+                                R{{ "%.2f"|format(l.amount_due) }}
+                            </span>
                         </div>
                     {% endfor %}
                 </div>
             {% else %}
-                <p class="text-slate-500 text-sm italic">You haven't claimed any chores yet.</p>
+                <p class="text-slate-500 text-sm italic">No balances recorded yet.</p>
             {% endif %}
         </div>
+
+        <!-- 6. Change PIN -->
+        <div class="bg-white p-6 rounded-xl shadow-md">
+            <h3 class="font-bold text-slate-800 text-lg mb-3">🔒 Change Your PIN</h3>
+            <form action="/update_pin/{{ kid.id }}" method="POST" class="flex gap-3">
+                <input type="text" name="new_pin" value="{{ kid.pin }}" placeholder="Enter new PIN" required
+                       class="border border-slate-300 p-2 rounded-lg flex-grow focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                <button type="submit" class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-4 py-2 rounded-lg transition">
+                    Save PIN
+                </button>
+            </form>
+        </div>
+
+        <!-- 7. Penalty / Release Log -->
+        {% if penalty_logs %}
+        <div class="bg-red-50 border-l-4 border-red-500 p-6 rounded-r-xl shadow-md">
+            <h3 class="font-bold text-red-800 text-lg mb-2">⚠️ Penalty / Release Log</h3>
+            <p class="text-xs text-red-600 mb-3">Penalties applied to your ledger balance for released or overdue chores:</p>
+            <div class="divide-y divide-red-200 text-xs">
+                {% for pl in penalty_logs %}
+                    <div class="py-2 flex justify-between items-center">
+                        <div>
+                            <span class="font-bold text-red-800">{{ pl.chore_title }}</span>
+                            <div class="text-red-600 text-2xs">{{ pl.reason }} (Funder: {{ pl.adult.name }})</div>
+                        </div>
+                        <div class="text-right font-bold text-red-700 text-sm">
+                            -R{{ "%.2f"|format(pl.penalty_amount) }}
+                            <div class="text-2xs text-red-400 font-normal">{{ pl.created_at.strftime('%d %b %H:%M') }}</div>
+                        </div>
+                    </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
     </div>
     """
     return render_page(html, kid=kid, uncompleted_chores=uncompleted_chores, my_chores=my_chores, ledgers=ledgers, locked_adult_ids=locked_adult_ids, release_hours=release_hours, now=now, penalty_logs=penalty_logs)
@@ -984,7 +1000,6 @@ def post_chore(adult_id):
         for i in range(total_instances):
             instance_due = base_due_date + (delta * i) if base_due_date else None
             
-            # Automatically append date tag if recurring or if a due date is specified
             if instance_due and (total_instances > 1 or repeat_unit == 'days'):
                 date_tag = instance_due.strftime('%a %d %b')
                 instance_title = f"{raw_title} (for {date_tag})"
