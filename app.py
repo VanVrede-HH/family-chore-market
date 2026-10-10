@@ -400,7 +400,7 @@ def adult_portal(adult):
     release_hours = get_setting('release_hours', '1')
     leaderboard_days = get_setting('leaderboard_days', '7')
     penalty_grace_hours = float(get_setting('penalty_grace_hours', '0'))
-    penalty_rate = float(get_setting('penalty_percent', '10'))
+    penalty_percent = float(get_setting('penalty_percent', '10'))
     daily_interest_percent = get_setting('daily_interest_percent', '0')
 
     # Pre-calculate suggested default penalties for pending verification chores
@@ -412,7 +412,7 @@ def adult_portal(adult):
             if c.due_date and c.completed_at:
                 deadline = c.due_date + timedelta(hours=penalty_grace_hours)
                 if c.completed_at > deadline:
-                    suggested_penalty = round(c.reward * (penalty_rate / 100.0), 2)
+                    suggested_penalty = round(c.reward * (penalty_percent / 100.0), 2)
                     suggested_reward = max(0.0, c.reward - suggested_penalty)
             chore_calcs[c.id] = {"reward": suggested_reward, "penalty": suggested_penalty}
 
