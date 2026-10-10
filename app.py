@@ -49,6 +49,7 @@ class Ledger(db.Model):
     amount_due = db.Column(db.Float, default=0.0)
     pending_payout = db.Column(db.Float, default=0.0)
     status = db.Column(db.String(30), default='Settled')
+    last_interest_applied = db.Column(db.DateTime, nullable=True)
 
     adult = db.relationship('User', foreign_keys=[adult_id])
     kid = db.relationship('User', foreign_keys=[kid_id])
@@ -69,6 +70,26 @@ def set_setting(key, value):
     else:
         s.value = str(value)
     db.session.commit()
+
+def apply_daily_interest():
+    try:
+        daily_rate_pct = float(get_setting('daily_interest_percent', '0'))
+        if daily_rate_pct <= 0:
+            return
+        
+        now = datetime.utcnow()
+        ledgers = Ledger.query.filter(Ledger.amount_due < 0).all()
+        for l in ledgers:
+            last = l.last_interest_applied or now
+            days_passed = (now - last).total_seconds() / 86400.0
+            if days_passed >= 1.0:
+                # Apply compound interest on negative balance (debt)
+                interest = abs(l.amount_due) * (daily_rate_pct / 100.0) * days_passed
+                l.amount_due -= interest  # Make it more negative
+                l.last_interest_applied = now
+        db.session.commit()
+    except Exception:
+        pass
 
 def get_or_create_ledger(adult_id, kid_id):
     ledger = Ledger.query.filter_by(adult_id=adult_id, kid_id=kid_id).first()
@@ -124,6 +145,7 @@ def render_page(inner_html, **context):
 
 @app.route('/')
 def home():
+    apply_daily_interest()
     users = User.query.all()
     
     lb_days = int(get_setting('leaderboard_days', '7'))
@@ -228,6 +250,7 @@ def verify_pin(user_id):
 
 @app.route('/dashboard/<int:user_id>')
 def dashboard(user_id):
+    apply_daily_interest()
     if session.get('user_id') != user_id:
         flash("Please log in with your profile PIN first.", "error")
         return redirect(url_for('access_profile', user_id=user_id))
@@ -279,13 +302,15 @@ def update_settings():
     leaderboard_days = request.form.get('leaderboard_days', '7')
     penalty_grace_hours = request.form.get('penalty_grace_hours', '0')
     penalty_percent = request.form.get('penalty_percent', '10')
+    daily_interest_percent = request.form.get('daily_interest_percent', '0')
 
     set_setting('release_hours', release_hours)
     set_setting('leaderboard_days', leaderboard_days)
     set_setting('penalty_grace_hours', penalty_grace_hours)
     set_setting('penalty_percent', penalty_percent)
+    set_setting('daily_interest_percent', daily_interest_percent)
 
-    flash("Platform settings and penalty rules updated successfully!", "success")
+    flash("Platform settings and loan interest rules updated successfully!", "success")
     return redirect(url_for('dashboard', user_id=session.get('user_id')))
 
 
@@ -377,10 +402,11 @@ def adult_portal(adult):
     leaderboard_days = get_setting('leaderboard_days', '7')
     penalty_grace_hours = get_setting('penalty_grace_hours', '0')
     penalty_percent = get_setting('penalty_percent', '10')
+    daily_interest_percent = get_setting('daily_interest_percent', '0')
 
     ledger_text = f"Family Chore Market - Ledger Summary for {adult.name}%0A%0A"
     for l in ledgers:
-        ledger_text += f"- {l.kid.name}: R{l.amount_due:.2f} unpaid (Status: {l.status})%0A"
+        ledger_text += f"- {l.kid.name}: R{l.amount_due:.2f} balance (Status: {l.status})%0A"
 
     filter_period = request.args.get('filter_period', 'all')
     audit_query = Chore.query.filter(Chore.status == 'Completed')
@@ -402,7 +428,7 @@ def adult_portal(adult):
 
         {% if adult.role == 'parent' %}
         <div class="bg-white p-6 rounded-xl shadow-md border border-indigo-100">
-            <h3 class="font-bold text-slate-800 text-lg mb-2">⚙️ Platform Variables & System-Wide Penalty Rules</h3>
+            <h3 class="font-bold text-slate-800 text-lg mb-2">⚙️ Platform Variables, Penalties & Loan Interest</h3>
             <form action="/update_settings" method="POST" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                     <label class="block text-xs font-semibold text-slate-600 mb-1">Kid Release Buffer (Hours)</label>
@@ -419,6 +445,10 @@ def adult_portal(adult):
                 <div>
                     <label class="block text-xs font-semibold text-slate-600 mb-1">Late Penalty Rate (%)</label>
                     <input type="number" step="1" name="penalty_percent" value="{{ penalty_percent }}" required class="border border-slate-300 p-2 rounded-lg w-full text-sm">
+                </div>
+                <div class="sm:col-span-2">
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">Daily Negative Balance Interest Rate (%) e.g. 0.05</label>
+                    <input type="number" step="0.001" name="daily_interest_percent" value="{{ daily_interest_percent }}" required class="border border-slate-300 p-2 rounded-lg w-full text-sm">
                 </div>
                 <div class="sm:col-span-2">
                     <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-lg text-sm transition w-full sm:w-auto">
@@ -516,7 +546,7 @@ def adult_portal(adult):
         </div>
 
         <div class="bg-white p-6 rounded-xl shadow-md">
-            <h3 class="font-bold text-slate-800 text-lg mb-3">💰 Your Kid Ledgers & Manual Adjustments</h3>
+            <h3 class="font-bold text-slate-800 text-lg mb-3">💰 Kid Ledgers, Payouts & Pocket Money Loans</h3>
             {% if ledgers %}
                 <div class="divide-y">
                     {% for l in ledgers %}
@@ -524,7 +554,7 @@ def adult_portal(adult):
                             <div>
                                 <span class="font-semibold text-slate-800">{{ l.kid.name }}</span>
                                 <div class="text-sm text-slate-500">
-                                    Earned Unpaid: <span class="font-bold text-emerald-600">R{{ "%.2f"|format(l.amount_due) }}</span>
+                                    Balance / Owed: <span class="font-bold {% if l.amount_due < 0 %}text-red-600{% else %}text-emerald-600{% endif %}">R{{ "%.2f"|format(l.amount_due) }}</span>
                                 </div>
                                 <form action="/adjust_ledger/{{ l.id }}" method="POST" class="mt-1 flex items-center gap-2">
                                     <span class="text-xs text-slate-500">Manual Override R:</span>
@@ -540,14 +570,14 @@ def adult_portal(adult):
                                     <span class="bg-amber-100 text-amber-700 px-3 py-1 rounded-lg text-xs font-bold">
                                         Pending Confirmation (R{{ "%.2f"|format(l.pending_payout) }})
                                     </span>
-                                {% elif l.amount_due > 0 %}
-                                    <form action="/pay_kid/{{ adult.id }}/{{ l.kid.id }}" method="POST" class="inline">
-                                        <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-4 py-1.5 rounded-lg transition">
-                                            Mark Paid (R{{ "%.2f"|format(l.amount_due) }})
+                                {% else %}
+                                    <form action="/pay_kid/{{ adult.id }}/{{ l.kid.id }}" method="POST" class="flex items-center gap-2">
+                                        <input type="number" step="1" min="1" name="payout_amount" placeholder="Amount R" required
+                                               class="border border-slate-300 p-1.5 text-xs rounded w-24 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                                        <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition">
+                                            Pay / Advance Loan
                                         </button>
                                     </form>
-                                {% else %}
-                                    <span class="text-slate-400 text-xs font-semibold">Settled</span>
                                 {% endif %}
                             </div>
                         </div>
@@ -634,6 +664,7 @@ def kid_portal(kid):
     uncompleted_chores = Chore.query.filter(Chore.status.in_(['Open', 'Claimed', 'Pending Verification'])).all()
     my_chores = Chore.query.filter_by(assigned_to_id=kid.id).all()
     ledgers = Ledger.query.filter_by(kid_id=kid.id).all()
+    # Block claiming chores ONLY for the specific funder whose payment is pending confirmation
     locked_adult_ids = [l.adult_id for l in ledgers if l.status == 'Pending Confirmation']
 
     release_hours = float(get_setting('release_hours', '1'))
@@ -664,9 +695,9 @@ def kid_portal(kid):
             {% if l.status == 'Pending Confirmation' %}
                 <div class="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-r-xl shadow-sm flex flex-col sm:flex-row justify-between items-center gap-3">
                     <div>
-                        <h4 class="font-bold text-amber-800">Payout Pending Confirmation</h4>
+                        <h4 class="font-bold text-amber-800">Payout Pending Confirmation ({{ l.adult.name }})</h4>
                         <p class="text-xs text-amber-700">
-                            <strong>{{ l.adult.name }}</strong> marked <strong>R{{ "%.2f"|format(l.pending_payout) }}</strong> as paid. Please confirm receipt.
+                            <strong>{{ l.adult.name }}</strong> sent <strong>R{{ "%.2f"|format(l.pending_payout) }}</strong>. Please confirm receipt to unlock claiming this funder's chores.
                         </p>
                     </div>
                     <form action="/confirm_payment/{{ kid.id }}/{{ l.id }}" method="POST">
@@ -679,13 +710,15 @@ def kid_portal(kid):
         {% endfor %}
 
         <div class="bg-white p-6 rounded-xl shadow-md">
-            <h3 class="font-bold text-slate-800 text-lg mb-3">💵 Your Earnings by Funder</h3>
+            <h3 class="font-bold text-slate-800 text-lg mb-3">💵 Your Balances by Funder</h3>
             {% if ledgers %}
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {% for l in ledgers %}
                         <div class="border p-3 rounded-lg flex justify-between items-center">
                             <span class="font-semibold text-slate-700">{{ l.adult.name }}</span>
-                            <span class="font-bold text-emerald-600 text-lg">R{{ "%.2f"|format(l.amount_due) }}</span>
+                            <span class="font-bold text-lg {% if l.amount_due < 0 %}text-red-600{% else %}text-emerald-600{% endif %}">
+                                R{{ "%.2f"|format(l.amount_due) }}
+                            </span>
                         </div>
                     {% endfor %}
                 </div>
@@ -713,7 +746,7 @@ def kid_portal(kid):
                             <div>
                                 {% if c.status == 'Open' %}
                                     {% if c.created_by_id in locked_adult_ids %}
-                                        <span class="text-xs font-bold text-red-500 bg-red-50 px-2.5 py-1 rounded">
+                                        <span class="text-xs font-bold text-red-500 bg-red-50 px-2.5 py-1 rounded" title="Confirm pending payment from this specific funder first">
                                             Blocked (Confirm Payment)
                                         </span>
                                     {% else %}
@@ -816,7 +849,7 @@ def claim_chore(kid_id, chore_id):
     ledger = Ledger.query.filter_by(adult_id=chore.created_by_id, kid_id=kid_id).first()
     
     if ledger and ledger.status == 'Pending Confirmation':
-        flash("Confirm your pending payment from this adult first!", "error")
+        flash(f"Confirm your pending payment from {chore.creator.name} first!", "error")
         return redirect(url_for('dashboard', user_id=kid_id))
 
     if chore.status == 'Open':
@@ -887,13 +920,20 @@ def verify_chore(adult_id, chore_id):
 
 @app.route('/pay_kid/<int:adult_id>/<int:kid_id>', methods=['POST'])
 def pay_kid(adult_id, kid_id):
-    ledger = Ledger.query.filter_by(adult_id=adult_id, kid_id=kid_id).first()
-    if ledger and ledger.amount_due > 0:
-        ledger.pending_payout = ledger.amount_due
-        ledger.amount_due = 0.0
-        ledger.status = 'Pending Confirmation'
-        db.session.commit()
-        flash("Payout initiated. Waiting for kid to confirm receipt.", "success")
+    ledger = get_or_create_ledger(adult_id=adult_id, kid_id=kid_id)
+    try:
+        payout_amt = float(request.form.get('payout_amount', 0))
+        if payout_amt > 0:
+            ledger.pending_payout = payout_amt
+            ledger.amount_due -= payout_amt  # Reduces balance or pushes into negative (loan)
+            ledger.status = 'Pending Confirmation'
+            ledger.last_interest_applied = datetime.utcnow()
+            db.session.commit()
+            flash(f"Payout / Advance of R{payout_amt:.2f} initiated. Waiting for kid to confirm receipt.", "success")
+        else:
+            flash("Invalid payout amount entered.", "error")
+    except ValueError:
+        flash("Invalid amount entered.", "error")
     return redirect(url_for('dashboard', user_id=adult_id))
 
 
@@ -904,7 +944,7 @@ def confirm_payment(kid_id, ledger_id):
         ledger.pending_payout = 0.0
         ledger.status = 'Settled'
         db.session.commit()
-        flash("Payment receipt confirmed! Ledger is settled.", "success")
+        flash("Payment receipt confirmed! Ledger updated.", "success")
     return redirect(url_for('dashboard', user_id=kid_id))
 
 
