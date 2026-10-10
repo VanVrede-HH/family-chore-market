@@ -1,4 +1,4 @@
-from flask import Flask, render_template_string, request, redirect, url_for, flash
+from flask import Flask, render_template_string, request, redirect, url_for, flash, get_flashed_messages
 from flask_sqlalchemy import SQLAlchemy
 
 app = Flask(__name__)
@@ -8,13 +8,10 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
 
-# ---------------------------------------------------------
-# Database Models
-# ---------------------------------------------------------
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(50), nullable=False, unique=True)
-    role = db.Column(db.String(20), nullable=False)  # 'parent', 'adult', 'kid'
+    role = db.Column(db.String(20), nullable=False)
 
 class Chore(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -22,7 +19,7 @@ class Chore(db.Model):
     reward = db.Column(db.Float, nullable=False)
     created_by_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     assigned_to_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
-    status = db.Column(db.String(30), default='Open')  # 'Open', 'Pending Verification', 'Completed'
+    status = db.Column(db.String(30), default='Open')
 
     creator = db.relationship('User', foreign_keys=[created_by_id])
     assignee = db.relationship('User', foreign_keys=[assigned_to_id])
@@ -33,7 +30,7 @@ class Ledger(db.Model):
     kid_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     amount_due = db.Column(db.Float, default=0.0)
     pending_payout = db.Column(db.Float, default=0.0)
-    status = db.Column(db.String(30), default='Settled')  # 'Settled', 'Pending Confirmation'
+    status = db.Column(db.String(30), default='Settled')
 
     adult = db.relationship('User', foreign_keys=[adult_id])
     kid = db.relationship('User', foreign_keys=[kid_id])
@@ -46,9 +43,6 @@ def get_or_create_ledger(adult_id, kid_id):
         db.session.commit()
     return ledger
 
-# ---------------------------------------------------------
-# Base HTML Layout
-# ---------------------------------------------------------
 BASE_LAYOUT = """
 <!DOCTYPE html>
 <html lang="en">
@@ -65,15 +59,14 @@ BASE_LAYOUT = """
     </nav>
 
     <div class="max-w-4xl mx-auto px-4 pb-12">
-        {% with messages = get_flashed_messages(with_categories=true) %}
-          {% if messages %}
-            {% for category, message in messages %}
-              <div class="p-4 mb-4 rounded-lg {% if category == 'error' %}bg-red-100 text-red-700{% else %}bg-green-100 text-green-700{% endif %} font-medium">
-                {{ message }}
-              </div>
-            {% endfor %}
-          {% endif %}
-        {% endwith %}
+        {% set messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          {% for category, message in messages %}
+            <div class="p-4 mb-4 rounded-lg {% if category == 'error' %}bg-red-100 text-red-700{% else %}bg-green-100 text-green-700{% endif %} font-medium">
+              {{ message }}
+            </div>
+          {% endfor %}
+        {% endif %}
 
         {{ content|safe }}
     </div>
@@ -83,12 +76,9 @@ BASE_LAYOUT = """
 
 def render_page(inner_html, **context):
     from jinja2 import Template
+    context['get_flashed_messages'] = get_flashed_messages
     rendered_inner = Template(inner_html).render(**context)
     return Template(BASE_LAYOUT).render(content=rendered_inner, **context)
-
-# ---------------------------------------------------------
-# Routes
-# ---------------------------------------------------------
 
 @app.route('/')
 def home():
@@ -120,7 +110,6 @@ def home():
     """
     return render_page(html, users=users)
 
-
 @app.route('/add_user', methods=['POST'])
 def add_user():
     name = request.form.get('name', '').strip()
@@ -134,7 +123,6 @@ def add_user():
         else:
             flash("A family member with that name already exists.", "error")
     return redirect(request.referrer or url_for('home'))
-
 
 @app.route('/adult/<int:user_id>')
 def adult_dashboard(user_id):
@@ -264,7 +252,6 @@ def adult_dashboard(user_id):
     """
     return render_page(html, adult=adult, kids=kids, my_chores=my_chores, ledgers=ledgers)
 
-
 @app.route('/post_chore/<int:adult_id>', methods=['POST'])
 def post_chore(adult_id):
     title = request.form.get('title', '').strip()
@@ -279,7 +266,6 @@ def post_chore(adult_id):
         db.session.commit()
         flash("Chore posted successfully!", "success")
     return redirect(url_for('adult_dashboard', user_id=adult_id))
-
 
 @app.route('/kid/<int:user_id>')
 def kid_dashboard(user_id):
@@ -407,7 +393,6 @@ def kid_dashboard(user_id):
     """
     return render_page(html, kid=kid, open_chores=open_chores, my_chores=my_chores, ledgers=ledgers, locked_adult_ids=locked_adult_ids)
 
-
 @app.route('/claim_chore/<int:kid_id>/<int:chore_id>', methods=['POST'])
 def claim_chore(kid_id, chore_id):
     chore = Chore.query.get_or_404(chore_id)
@@ -423,7 +408,6 @@ def claim_chore(kid_id, chore_id):
         flash("Chore claimed!", "success")
     return redirect(url_for('kid_dashboard', user_id=kid_id))
 
-
 @app.route('/complete_chore/<int:kid_id>/<int:chore_id>', methods=['POST'])
 def complete_chore(kid_id, chore_id):
     chore = Chore.query.get_or_404(chore_id)
@@ -432,7 +416,6 @@ def complete_chore(kid_id, chore_id):
         db.session.commit()
         flash("Chore submitted for adult verification!", "success")
     return redirect(url_for('kid_dashboard', user_id=kid_id))
-
 
 @app.route('/verify_chore/<int:adult_id>/<int:chore_id>', methods=['POST'])
 def verify_chore(adult_id, chore_id):
@@ -445,7 +428,6 @@ def verify_chore(adult_id, chore_id):
         flash("Chore verified! Ledger balance updated.", "success")
     return redirect(url_for('adult_dashboard', user_id=adult_id))
 
-
 @app.route('/pay_kid/<int:adult_id>/<int:kid_id>', methods=['POST'])
 def pay_kid(adult_id, kid_id):
     ledger = Ledger.query.filter_by(adult_id=adult_id, kid_id=kid_id).first()
@@ -457,7 +439,6 @@ def pay_kid(adult_id, kid_id):
         flash("Payout initiated. Waiting for kid to confirm receipt on their portal.", "success")
     return redirect(url_for('adult_dashboard', user_id=adult_id))
 
-
 @app.route('/confirm_payment/<int:kid_id>/<int:ledger_id>', methods=['POST'])
 def confirm_payment(kid_id, ledger_id):
     ledger = Ledger.query.get_or_404(ledger_id)
@@ -467,7 +448,6 @@ def confirm_payment(kid_id, ledger_id):
         db.session.commit()
         flash("Payment receipt confirmed! Ledger is settled.", "success")
     return redirect(url_for('kid_dashboard', user_id=kid_id))
-
 
 with app.app_context():
     db.create_all()
