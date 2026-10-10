@@ -1,5 +1,6 @@
 from flask import Flask, render_template_string, request, redirect, url_for, flash, get_flashed_messages, session, Response
 from flask_sqlalchemy import SQLAlchemy
+from datetime import datetime, timedelta
 import json
 
 app = Flask(__name__)
@@ -24,7 +25,9 @@ class Chore(db.Model):
     reward = db.Column(db.Float, nullable=False)
     created_by_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     assigned_to_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
-    status = db.Column(db.String(30), default='Open')
+    status = db.Column(db.String(30), default='Open')  # 'Open', 'Claimed', 'Pending Verification', 'Completed'
+    claimed_at = db.Column(db.DateTime, nullable=True)
+    completed_at = db.Column(db.DateTime, nullable=True)
 
     creator = db.relationship('User', foreign_keys=[created_by_id])
     assignee = db.relationship('User', foreign_keys=[assigned_to_id])
@@ -39,6 +42,23 @@ class Ledger(db.Model):
 
     adult = db.relationship('User', foreign_keys=[adult_id])
     kid = db.relationship('User', foreign_keys=[kid_id])
+
+class Setting(db.Model):
+    key = db.Column(db.String(50), primary_key=True)
+    value = db.Column(db.String(200), nullable=False)
+
+def get_setting(key, default):
+    s = Setting.query.get(key)
+    return s.value if s else default
+
+def set_setting(key, value):
+    s = Setting.query.get(key)
+    if not s:
+        s = Setting(key=key, value=str(value))
+        db.session.add(s)
+    else:
+        s.value = str(value)
+    db.session.commit()
 
 def get_or_create_ledger(adult_id, kid_id):
     ledger = Ledger.query.filter_by(adult_id=adult_id, kid_id=kid_id).first()
@@ -89,36 +109,81 @@ def render_page(inner_html, **context):
     return Template(BASE_LAYOUT).render(content=rendered_inner, **context)
 
 # ---------------------------------------------------------
-# Routes
+# Routes & Views
 # ---------------------------------------------------------
 
 @app.route('/')
 def home():
     users = User.query.all()
+    
+    lb_days = int(get_setting('leaderboard_days', '7'))
+    cutoff = datetime.utcnow() - timedelta(days=lb_days)
+    
+    kids = User.query.filter_by(role='kid').all()
+    leaderboard = []
+    for k in kids:
+        earned = db.session.query(db.func.sum(Chore.reward)).filter(
+            Chore.assigned_to_id == k.id,
+            Chore.status == 'Completed',
+            Chore.completed_at >= cutoff
+        ).scalar() or 0.0
+        leaderboard.append({"name": k.name, "earned": earned})
+    
+    leaderboard = sorted(leaderboard, key=lambda x: x['earned'], reverse=True)
+
     html = """
-    <div class="bg-white p-6 rounded-xl shadow-md max-w-lg mx-auto">
-        <h2 class="text-2xl font-bold mb-4 text-center text-slate-800">Select Your Profile</h2>
-        <div class="space-y-3">
-            {% for u in users %}
-                <div class="flex items-center justify-between p-3 border rounded-lg hover:bg-slate-50 transition">
-                    <div>
-                        <span class="font-semibold text-lg text-slate-800">{{ u.name }}</span>
-                        <span class="ml-2 px-2 py-0.5 text-xs rounded uppercase font-bold 
-                            {% if u.role == 'parent' %}bg-purple-100 text-purple-700
-                            {% elif u.role == 'adult' %}bg-blue-100 text-blue-700
-                            {% else %}bg-green-100 text-green-700{% endif %}">
-                            {{ u.role }}
-                        </span>
-                    </div>
-                    <a href="/access/{{ u.id }}" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-1.5 rounded text-sm font-semibold">
-                        {% if u.pin %}🔒 Enter Portal{% else %}Open Portal{% endif %}
-                    </a>
+    <div class="space-y-6 max-w-lg mx-auto">
+        <div class="bg-white p-6 rounded-xl shadow-md border-l-4 border-amber-500">
+            <h3 class="font-bold text-slate-800 text-lg mb-1">🏆 Top Earners (Past {{ lb_days }} Days)</h3>
+            <p class="text-xs text-slate-500 mb-3">Keep up the great work! Refreshed automatically.</p>
+            {% if leaderboard %}
+                <div class="divide-y">
+                    {% for entry in leaderboard %}
+                        <div class="py-2 flex justify-between items-center text-sm">
+                            <span class="font-semibold text-slate-700">{{ loop.index }}. {{ entry.name }}</span>
+                            <span class="font-bold text-emerald-600">R{{ "%.2f"|format(entry.earned) }}</span>
+                        </div>
+                    {% endfor %}
                 </div>
-            {% endfor %}
+            {% else %}
+                <p class="text-xs text-slate-400 italic">No earnings recorded for this period yet.</p>
+            {% endif %}
+        </div>
+
+        <div class="bg-white p-6 rounded-xl shadow-md">
+            <h2 class="text-2xl font-bold mb-4 text-center text-slate-800">Select Your Profile</h2>
+            <div class="space-y-3">
+                {% for u in users %}
+                    <div class="flex items-center justify-between p-3 border rounded-lg hover:bg-slate-50 transition">
+                        <div>
+                            <span class="font-semibold text-lg text-slate-800">{{ u.name }}</span>
+                            <span class="ml-2 px-2 py-0.5 text-xs rounded uppercase font-bold 
+                                {% if u.role == 'parent' %}bg-purple-100 text-purple-700
+                                {% elif u.role == 'adult' %}bg-blue-100 text-blue-700
+                                {% else %}bg-green-100 text-green-700{% endif %}">
+                                {{ u.role }}
+                            </span>
+                        </div>
+                        <a href="/access/{{ u.id }}" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-1.5 rounded text-sm font-semibold">
+                            {% if u.pin %}🔒 Enter Portal{% else %}Open Portal{% endif %}
+                        </a>
+                    </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="bg-white p-6 rounded-xl shadow-md border border-slate-200">
+            <h3 class="font-bold text-slate-800 text-md mb-2">🔄 Restore Backup (JSON)</h3>
+            <form action="/upload_backup" method="POST" enctype="multipart/form-data" class="flex flex-col sm:flex-row gap-2">
+                <input type="file" name="backup_file" accept=".json" required class="text-xs text-slate-500 file:mr-2 file:py-1.5 file:px-3 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200 flex-grow">
+                <button type="submit" class="bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold px-4 py-2 rounded transition">
+                    Restore
+                </button>
+            </form>
         </div>
     </div>
     """
-    return render_page(html, users=users)
+    return render_page(html, users=users, leaderboard=leaderboard, lb_days=lb_days)
 
 
 @app.route('/access/<int:user_id>')
@@ -158,7 +223,7 @@ def verify_pin(user_id):
         return redirect(url_for('dashboard', user_id=user.id))
     else:
         flash("Incorrect PIN. Please try again.", "error")
-        return redirect(url_for('access_profile', user_id=user.id))
+        return redirect(url_for('access_profile', user_id=user_id))
 
 
 @app.route('/dashboard/<int:user_id>')
@@ -187,6 +252,10 @@ def add_user():
             flash(f"Added member: {name} ({role})", "success")
         else:
             flash("A family member with that name already exists.", "error")
+    
+    current_user_id = session.get('user_id')
+    if current_user_id:
+        return redirect(url_for('dashboard', user_id=current_user_id))
     return redirect(url_for('home'))
 
 
@@ -197,7 +266,21 @@ def update_pin(user_id):
     user.pin = new_pin
     db.session.commit()
     flash("PIN updated successfully!", "success")
+    
+    current_user_id = session.get('user_id')
+    if current_user_id:
+        return redirect(url_for('dashboard', user_id=current_user_id))
     return redirect(url_for('dashboard', user_id=user.id))
+
+
+@app.route('/update_settings', methods=['POST'])
+def update_settings():
+    release_hours = request.form.get('release_hours', '1')
+    leaderboard_days = request.form.get('leaderboard_days', '7')
+    set_setting('release_hours', release_hours)
+    set_setting('leaderboard_days', leaderboard_days)
+    flash("Platform settings updated successfully!", "success")
+    return redirect(url_for('dashboard', user_id=session.get('user_id')))
 
 
 @app.route('/export_backup')
@@ -214,11 +297,76 @@ def export_backup():
     )
 
 
+@app.route('/upload_backup', methods=['POST'])
+def upload_backup():
+    if 'backup_file' not in request.files:
+        flash("No backup file selected.", "error")
+        return redirect(url_for('home'))
+    file = request.files['backup_file']
+    if file.filename == '':
+        flash("No backup file selected.", "error")
+        return redirect(url_for('home'))
+    try:
+        data = json.load(file)
+        db.drop_all()
+        db.create_all()
+
+        for u_data in data.get("users", []):
+            u = User(id=u_data["id"], name=u_data["name"], role=u_data["role"], pin=u_data.get("pin", ""))
+            db.session.add(u)
+        db.session.commit()
+
+        for c_data in data.get("chores", []):
+            c = Chore(
+                id=c_data["id"], title=c_data["title"], reward=c_data["reward"],
+                created_by_id=c_data["created_by"], assigned_to_id=c_data["assigned_to"], status=c_data["status"]
+            )
+            db.session.add(c)
+        db.session.commit()
+
+        for l_data in data.get("ledgers", []):
+            l = Ledger(
+                id=l_data["id"], adult_id=l_data["adult_id"], kid_id=l_data["kid_id"],
+                amount_due=l_data["amount_due"], status=l_data.get("status", "Settled")
+            )
+            db.session.add(l)
+        db.session.commit()
+
+        flash("Backup restored successfully!", "success")
+    except Exception as e:
+        flash(f"Error restoring backup: {str(e)}", "error")
+    return redirect(url_for('home'))
+
+
+@app.route('/adjust_ledger/<int:ledger_id>', methods=['POST'])
+def adjust_ledger(ledger_id):
+    ledger = Ledger.query.get_or_404(ledger_id)
+    try:
+        new_amount = float(request.form.get('amount_due', 0))
+        ledger.amount_due = new_amount
+        db.session.commit()
+        flash(f"Manually updated ledger balance for {ledger.kid.name}.", "success")
+    except ValueError:
+        flash("Invalid amount entered.", "error")
+    return redirect(url_for('dashboard', user_id=ledger.adult_id))
+
+
 def adult_portal(adult):
     kids = User.query.filter_by(role='kid').all()
     all_users = User.query.all()
     my_chores = Chore.query.filter_by(created_by_id=adult.id).all()
     ledgers = Ledger.query.filter_by(adult_id=adult.id).all()
+
+    release_hours = get_setting('release_hours', '1')
+    leaderboard_days = get_setting('leaderboard_days', '7')
+
+    filter_period = request.args.get('filter_period', 'all')
+    audit_query = Chore.query.filter(Chore.status == 'Completed')
+    if filter_period == '7days':
+        audit_query = audit_query.filter(Chore.completed_at >= datetime.utcnow() - timedelta(days=7))
+    elif filter_period == '30days':
+        audit_query = audit_query.filter(Chore.completed_at >= datetime.utcnow() - timedelta(days=30))
+    audit_chores = audit_query.order_by(Chore.completed_at.desc()).all()
 
     html = """
     <div class="space-y-6">
@@ -232,16 +380,27 @@ def adult_portal(adult):
 
         {% if adult.role == 'parent' %}
         <div class="bg-white p-6 rounded-xl shadow-md border border-indigo-100">
+            <h3 class="font-bold text-slate-800 text-lg mb-2">⚙️ Platform Variables & Rules</h3>
+            <form action="/update_settings" method="POST" class="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">Kid Release Buffer (Hours)</label>
+                    <input type="number" step="0.5" name="release_hours" value="{{ release_hours }}" required class="border border-slate-300 p-2 rounded-lg w-full text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">Leaderboard Period (Days)</label>
+                    <input type="number" name="leaderboard_days" value="{{ leaderboard_days }}" required class="border border-slate-300 p-2 rounded-lg w-full text-sm">
+                </div>
+                <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">
+                    Save Variables
+                </button>
+            </form>
+        </div>
+
+        <div class="bg-white p-6 rounded-xl shadow-md border border-indigo-100">
             <h3 class="font-bold text-slate-800 text-lg mb-2">💾 Data Backup & Recovery</h3>
-            <p class="text-slate-500 text-sm mb-4">Download a local JSON backup of all users, chores, and ledgers, or email the daily ledger summary.</p>
-            <div class="flex flex-wrap gap-3">
-                <a href="/export_backup" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">
-                    ⬇️ Download JSON Backup
-                </a>
-                <a href="mailto:?subject=Family%20Chore%20Market%20Daily%20Backup&body=Family%20Chore%20Market%20Ledger%20Backup%20Summary" class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">
-                    📧 Email Ledger Summary
-                </a>
-            </div>
+            <a href="/export_backup" class="inline-block bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">
+                ⬇️ Download JSON Backup
+            </a>
         </div>
 
         <div class="bg-white p-6 rounded-xl shadow-md">
@@ -311,16 +470,24 @@ def adult_portal(adult):
         </div>
 
         <div class="bg-white p-6 rounded-xl shadow-md">
-            <h3 class="font-bold text-slate-800 text-lg mb-3">💰 Your Kid Ledgers</h3>
+            <h3 class="font-bold text-slate-800 text-lg mb-3">💰 Your Kid Ledgers & Manual Adjustments</h3>
             {% if ledgers %}
                 <div class="divide-y">
                     {% for l in ledgers %}
-                        <div class="py-3 flex flex-col sm:flex-row justify-between items-center gap-2">
+                        <div class="py-3 flex flex-col sm:flex-row justify-between items-center gap-3">
                             <div>
                                 <span class="font-semibold text-slate-800">{{ l.kid.name }}</span>
                                 <div class="text-sm text-slate-500">
                                     Earned Unpaid: <span class="font-bold text-emerald-600">R{{ "%.2f"|format(l.amount_due) }}</span>
                                 </div>
+                                <form action="/adjust_ledger/{{ l.id }}" method="POST" class="mt-1 flex items-center gap-2">
+                                    <span class="text-xs text-slate-500">Manual Override R:</span>
+                                    <input type="number" step="0.50" name="amount_due" value="{{ l.amount_due }}" 
+                                           class="border border-slate-300 p-1 text-xs rounded w-24 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                                    <button type="submit" class="bg-slate-700 hover:bg-slate-800 text-white text-xs px-2.5 py-1 rounded transition">
+                                        Set Balance
+                                    </button>
+                                </form>
                             </div>
                             <div>
                                 {% if l.status == 'Pending Confirmation' %}
@@ -341,7 +508,7 @@ def adult_portal(adult):
                     {% endfor %}
                 </div>
             {% else %}
-                <p class="text-slate-500 text-sm italic">No active ledgers yet. Assign and complete chores to generate balances.</p>
+                <p class="text-slate-500 text-sm italic">No active ledgers yet.</p>
             {% endif %}
         </div>
 
@@ -355,7 +522,7 @@ def adult_portal(adult):
                                 <h4 class="font-bold text-slate-800">{{ c.title }}</h4>
                                 <p class="text-xs text-slate-500">
                                     Reward: R{{ "%.2f"|format(c.reward) }} | 
-                                    Assignee: {{ c.assignee.name if c.assignee else 'Unassigned' }}
+                                    Assignee: {{ c.assignee.name if c.assignee else 'Unassigned' }} | Status: {{ c.status }}
                                 </p>
                             </div>
                             <div>
@@ -366,9 +533,7 @@ def adult_portal(adult):
                                         </button>
                                     </form>
                                 {% else %}
-                                    <span class="px-2.5 py-1 text-xs rounded-full font-bold
-                                        {% if c.status == 'Open' %}bg-blue-100 text-blue-700
-                                        {% else %}bg-slate-100 text-slate-600{% endif %}">
+                                    <span class="px-2.5 py-1 text-xs rounded-full font-bold bg-slate-100 text-slate-600">
                                         {{ c.status }}
                                     </span>
                                 {% endif %}
@@ -380,16 +545,50 @@ def adult_portal(adult):
                 <p class="text-slate-500 text-sm italic">You haven't posted any chores yet.</p>
             {% endif %}
         </div>
+
+        <div class="bg-white p-6 rounded-xl shadow-md">
+            <div class="flex flex-col sm:flex-row justify-between items-center mb-4 gap-3">
+                <h3 class="font-bold text-slate-800 text-lg">📜 Verified Chores Audit Log</h3>
+                <form method="GET" class="flex gap-2">
+                    <select name="filter_period" onchange="this.form.submit()" class="border border-slate-300 p-1.5 rounded text-xs">
+                        <option value="all" {% if filter_period == 'all' %}selected{% endif %}>All Time</option>
+                        <option value="7days" {% if filter_period == '7days' %}selected{% endif %}>Past 7 Days</option>
+                        <option value="30days" {% if filter_period == '30days' %}selected{% endif %}>Past 30 Days</option>
+                    </select>
+                </form>
+            </div>
+            {% if audit_chores %}
+                <div class="divide-y text-xs">
+                    {% for ac in audit_chores %}
+                        <div class="py-2 flex justify-between items-center">
+                            <div>
+                                <span class="font-semibold text-slate-800">{{ ac.title }}</span>
+                                <span class="text-slate-500">(Done by <strong>{{ ac.assignee.name if ac.assignee else 'Unknown' }}</strong> for <strong>{{ ac.creator.name }}</strong>)</span>
+                            </div>
+                            <div class="text-right">
+                                <span class="font-bold text-emerald-600">R{{ "%.2f"|format(ac.reward) }}</span>
+                                <div class="text-slate-400">{{ ac.completed_at.strftime('%Y-%m-%d %H:%M') if ac.completed_at else '' }}</div>
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <p class="text-slate-500 text-sm italic">No completed chores recorded for this period.</p>
+            {% endif %}
+        </div>
     </div>
     """
-    return render_page(html, adult=adult, kids=kids, all_users=all_users, my_chores=my_chores, ledgers=ledgers)
+    return render_page(html, adult=adult, kids=kids, all_users=all_users, my_chores=my_chores, ledgers=ledgers, release_hours=release_hours, leaderboard_days=leaderboard_days, audit_chores=audit_chores, filter_period=filter_period)
 
 
 def kid_portal(kid):
-    open_chores = Chore.query.filter_by(status='Open').all()
+    all_chores = Chore.query.filter(Chore.status.in_(['Open', 'Claimed'])).all()
     my_chores = Chore.query.filter_by(assigned_to_id=kid.id).all()
     ledgers = Ledger.query.filter_by(kid_id=kid.id).all()
     locked_adult_ids = [l.adult_id for l in ledgers if l.status == 'Pending Confirmation']
+
+    release_hours = float(get_setting('release_hours', '1'))
+    now = datetime.utcnow()
 
     html = """
     <div class="space-y-6">
@@ -447,35 +646,53 @@ def kid_portal(kid):
         </div>
 
         <div class="bg-white p-6 rounded-xl shadow-md">
-            <h3 class="font-bold text-slate-800 text-lg mb-3">🛒 Open Chore Market</h3>
-            {% if open_chores %}
+            <h3 class="font-bold text-slate-800 text-lg mb-3">🛒 Chore Market</h3>
+            {% if all_chores %}
                 <div class="space-y-3">
-                    {% for c in open_chores %}
+                    {% for c in all_chores %}
                         <div class="border p-3 rounded-lg flex justify-between items-center">
                             <div>
                                 <h4 class="font-bold text-slate-800">{{ c.title }}</h4>
                                 <p class="text-xs text-slate-500">
                                     Posted by: <strong class="text-indigo-600">{{ c.creator.name }}</strong> | Reward: <strong class="text-emerald-600">R{{ "%.2f"|format(c.reward) }}</strong>
+                                    {% if c.status == 'Claimed' %}
+                                        <br><span class="text-amber-600 font-semibold">Claimed by {{ c.assignee.name }}</span>
+                                    {% endif %}
                                 </p>
                             </div>
                             <div>
-                                {% if c.created_by_id in locked_adult_ids %}
-                                    <span class="text-xs font-bold text-red-500 bg-red-50 px-2.5 py-1 rounded">
-                                        Blocked (Confirm Pending Payment First)
-                                    </span>
+                                {% if c.status == 'Open' %}
+                                    {% if c.created_by_id in locked_adult_ids %}
+                                        <span class="text-xs font-bold text-red-500 bg-red-50 px-2.5 py-1 rounded">
+                                            Blocked (Confirm Payment)
+                                        </span>
+                                    {% else %}
+                                        <form action="/claim_chore/{{ kid.id }}/{{ c.id }}" method="POST">
+                                            <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3 py-1.5 rounded transition">
+                                                Claim
+                                            </button>
+                                        </form>
+                                    {% endif %}
+                                {% elif c.status == 'Claimed' and c.assigned_to_id == kid.id %}
+                                    {% set can_release = c.claimed_at and (now - c.claimed_at).total_seconds() < (release_hours * 3600) %}
+                                    {% if can_release %}
+                                        <form action="/release_chore/{{ kid.id }}/{{ c.id }}" method="POST">
+                                            <button type="submit" class="bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold px-3 py-1.5 rounded transition" title="Release back to pool without penalty">
+                                                Release
+                                            </button>
+                                        </form>
+                                    {% else %}
+                                        <span class="text-xs text-slate-400">Claimed</span>
+                                    {% endif %}
                                 {% else %}
-                                    <form action="/claim_chore/{{ kid.id }}/{{ c.id }}" method="POST">
-                                        <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3 py-1.5 rounded transition">
-                                            Claim Chore
-                                        </button>
-                                    </form>
+                                    <span class="text-xs text-slate-400">Claimed</span>
                                 {% endif %}
                             </div>
                         </div>
                     {% endfor %}
                 </div>
             {% else %}
-                <p class="text-slate-500 text-sm italic">No open chores available right now.</p>
+                <p class="text-slate-500 text-sm italic">No chores available right now.</p>
             {% endif %}
         </div>
 
@@ -492,7 +709,7 @@ def kid_portal(kid):
                                 </p>
                             </div>
                             <div>
-                                {% if c.status == 'Open' %}
+                                {% if c.status == 'Claimed' %}
                                     <form action="/complete_chore/{{ kid.id }}/{{ c.id }}" method="POST">
                                         <button type="submit" class="bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold px-3 py-1.5 rounded transition">
                                             Mark Done
@@ -515,7 +732,7 @@ def kid_portal(kid):
         </div>
     </div>
     """
-    return render_page(html, kid=kid, open_chores=open_chores, my_chores=my_chores, ledgers=ledgers, locked_adult_ids=locked_adult_ids)
+    return render_page(html, kid=kid, all_chores=all_chores, my_chores=my_chores, ledgers=ledgers, locked_adult_ids=locked_adult_ids, release_hours=release_hours, now=now)
 
 
 @app.route('/post_chore/<int:adult_id>', methods=['POST'])
@@ -540,23 +757,42 @@ def claim_chore(kid_id, chore_id):
     ledger = Ledger.query.filter_by(adult_id=chore.created_by_id, kid_id=kid_id).first()
     
     if ledger and ledger.status == 'Pending Confirmation':
-        flash("You must confirm your pending payment from this adult before claiming more chores from them!", "error")
+        flash("Confirm your pending payment from this adult first!", "error")
         return redirect(url_for('dashboard', user_id=kid_id))
 
     if chore.status == 'Open':
         chore.assigned_to_id = kid_id
+        chore.status = 'Claimed'
+        chore.claimed_at = datetime.utcnow()
         db.session.commit()
-        flash("Chore claimed!", "success")
+        flash("Chore claimed successfully!", "success")
+    return redirect(url_for('dashboard', user_id=kid_id))
+
+
+@app.route('/release_chore/<int:kid_id>/<int:chore_id>', methods=['POST'])
+def release_chore(kid_id, chore_id):
+    chore = Chore.query.get_or_404(chore_id)
+    release_hours = float(get_setting('release_hours', '1'))
+    
+    if chore.assigned_to_id == kid_id and chore.status == 'Claimed':
+        if chore.claimed_at and (datetime.utcnow() - chore.claimed_at).total_seconds() < (release_hours * 3600):
+            chore.assigned_to_id = None
+            chore.status = 'Open'
+            chore.claimed_at = None
+            db.session.commit()
+            flash("Chore released back to the open market.", "success")
+        else:
+            flash("Release window has expired.", "error")
     return redirect(url_for('dashboard', user_id=kid_id))
 
 
 @app.route('/complete_chore/<int:kid_id>/<int:chore_id>', methods=['POST'])
 def complete_chore(kid_id, chore_id):
     chore = Chore.query.get_or_404(chore_id)
-    if chore.assigned_to_id == kid_id and chore.status == 'Open':
+    if chore.assigned_to_id == kid_id and chore.status == 'Claimed':
         chore.status = 'Pending Verification'
         db.session.commit()
-        flash("Chore submitted for adult verification!", "success")
+        flash("Chore submitted for verification!", "success")
     return redirect(url_for('dashboard', user_id=kid_id))
 
 
@@ -565,10 +801,11 @@ def verify_chore(adult_id, chore_id):
     chore = Chore.query.get_or_404(chore_id)
     if chore.created_by_id == adult_id and chore.status == 'Pending Verification':
         chore.status = 'Completed'
+        chore.completed_at = datetime.utcnow()
         ledger = get_or_create_ledger(adult_id=adult_id, kid_id=chore.assigned_to_id)
         ledger.amount_due += chore.reward
         db.session.commit()
-        flash("Chore verified! Ledger balance updated.", "success")
+        flash("Chore verified! Ledger updated.", "success")
     return redirect(url_for('dashboard', user_id=adult_id))
 
 
@@ -579,8 +816,8 @@ def pay_kid(adult_id, kid_id):
         ledger.pending_payout = ledger.amount_due
         ledger.amount_due = 0.0
         ledger.status = 'Pending Confirmation'
-        db.json.commit() if hasattr(db, 'json') else db.session.commit()
-        flash("Payout initiated. Waiting for kid to confirm receipt on their portal.", "success")
+        db.session.commit()
+        flash("Payout initiated. Waiting for kid to confirm receipt.", "success")
     return redirect(url_for('dashboard', user_id=adult_id))
 
 
