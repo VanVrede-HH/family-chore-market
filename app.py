@@ -26,7 +26,7 @@ def get_sast_now():
     return datetime.now(SAST).replace(tzinfo=None)
 
 # ---------------------------------------------------------
-# Database Models (Unchanged - Zero risk to existing data)
+# Database Models
 # ---------------------------------------------------------
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -953,7 +953,7 @@ def kid_portal(kid):
 
 @app.route('/post_chore/<int:adult_id>', methods=['POST'])
 def post_chore(adult_id):
-    title = request.form.get('title', '').strip()
+    raw_title = request.form.get('title', '').strip()
     due_date_raw = request.form.get('due_date', '').strip()
     try:
         reward = float(request.form.get('reward', 0))
@@ -971,7 +971,7 @@ def post_chore(adult_id):
         except ValueError:
             base_due_date = None
 
-    if title and reward > 0:
+    if raw_title and reward > 0:
         delta = timedelta(days=0)
         if repeat_unit == 'minutes':
             delta = timedelta(minutes=repeat_every)
@@ -980,13 +980,22 @@ def post_chore(adult_id):
         elif repeat_unit == 'days':
             delta = timedelta(days=repeat_every)
 
-        for i in range(max(1, repeat_count)):
+        total_instances = max(1, repeat_count)
+        for i in range(total_instances):
             instance_due = base_due_date + (delta * i) if base_due_date else None
-            chore = Chore(title=title, reward=reward, due_date=instance_due, created_by_id=adult_id, status='Open')
+            
+            # Automatically append date tag if recurring or if a due date is specified
+            if instance_due and (total_instances > 1 or repeat_unit == 'days'):
+                date_tag = instance_due.strftime('%a %d %b')
+                instance_title = f"{raw_title} (for {date_tag})"
+            else:
+                instance_title = raw_title
+
+            chore = Chore(title=instance_title, reward=reward, due_date=instance_due, created_by_id=adult_id, status='Open')
             db.session.add(chore)
         
         db.session.commit()
-        flash(f"Successfully posted {max(1, repeat_count)} chore instance(s)!", "success")
+        flash(f"Successfully posted {total_instances} chore instance(s)!", "success")
     return redirect(url_for('dashboard', user_id=adult_id))
 
 
