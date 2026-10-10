@@ -881,6 +881,7 @@ def complete_chore(kid_id, chore_id):
     chore = Chore.query.get_or_404(chore_id)
     if chore.assigned_to_id == kid_id and chore.status == 'Claimed':
         chore.status = 'Pending Verification'
+        chore.completed_at = datetime.utcnow()  # Record the exact completion submission time
         db.session.commit()
         flash("Chore submitted for verification!", "success")
     return redirect(url_for('dashboard', user_id=kid_id))
@@ -890,17 +891,16 @@ def complete_chore(kid_id, chore_id):
 def verify_chore(adult_id, chore_id):
     chore = Chore.query.get_or_404(chore_id)
     if chore.created_by_id == adult_id and chore.status == 'Pending Verification':
-        now = datetime.utcnow()
         chore.status = 'Completed'
-        chore.completed_at = now
 
         final_reward = chore.reward
         penalty_grace = float(get_setting('penalty_grace_hours', '0'))
         penalty_rate = float(get_setting('penalty_percent', '10'))
 
-        if chore.due_date:
+        # Check if the submission time (completed_at) passed the deadline
+        if chore.due_date and chore.completed_at:
             deadline = chore.due_date + timedelta(hours=penalty_grace)
-            if now > deadline:
+            if chore.completed_at > deadline:
                 penalty_amount = round(chore.reward * (penalty_rate / 100.0))
                 final_reward = max(0.0, chore.reward - penalty_amount)
 
@@ -909,9 +909,9 @@ def verify_chore(adult_id, chore_id):
         db.session.commit()
         
         if final_reward < chore.reward:
-            flash(f"Chore verified late! Penalty applied: Earned R{final_reward:.0f} (Original R{chore.reward:.0f}).", "success")
+            flash(f"Chore submitted late! Penalty applied: Earned R{final_reward:.0f} (Original R{chore.reward:.0f}).", "success")
         else:
-            flash("Chore verified on time! Full reward credited.", "success")
+            flash("Chore verified! Full reward credited.", "success")
 
     return redirect(url_for('dashboard', user_id=adult_id))
 
