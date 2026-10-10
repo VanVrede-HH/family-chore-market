@@ -153,6 +153,7 @@ BASE_LAYOUT = """
 def render_page(inner_html, **context):
     from jinja2 import Template
     context['get_flashed_messages'] = get_flashed_messages
+    context['timedelta'] = timedelta  # Explicitly make timedelta available in templates
     rendered_inner = Template(inner_html).render(**context)
     return Template(BASE_LAYOUT).render(content=rendered_inner, **context)
 
@@ -429,7 +430,6 @@ def adult_portal(adult):
             suggested_penalty = 0.0
             if c.due_date:
                 deadline = c.due_date + timedelta(hours=penalty_grace_hours)
-                # Compare against completion submission time if available, otherwise current time
                 check_time = c.completed_at or now
                 if check_time > deadline:
                     suggested_penalty = round(c.reward * (penalty_percent / 100.0), 2)
@@ -966,7 +966,6 @@ def release_chore(kid_id, chore_id):
             db.session.commit()
             flash("Chore released back to open market without penalty.", "success")
         else:
-            # Deduct penalty
             penalty_amt = round(chore.reward * (penalty_rate / 100.0), 2)
             ledger = get_or_create_ledger(adult_id=chore.created_by_id, kid_id=kid_id)
             ledger.amount_due -= penalty_amt
