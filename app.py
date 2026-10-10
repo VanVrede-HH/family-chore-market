@@ -10,7 +10,9 @@ app.config['SECRET_KEY'] = 'family-chore-market-secure-key'
 # Handle PostgreSQL connection string from Render environment variable
 db_uri = os.environ.get('SQLALCHEMY_DATABASE_URI', 'sqlite:///chore_market.db')
 if db_uri.startswith("postgres://"):
-    db_uri = db_uri.replace("postgres://", "postgresql://", 1)
+    db_uri = db_uri.replace("postgres://", "postgresql+psycopg2://", 1)
+elif db_uri.startswith("postgresql://"):
+    db_uri = db_uri.replace("postgresql://", "postgresql+psycopg2://", 1)
 
 app.config['SQLALCHEMY_DATABASE_URI'] = db_uri
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
