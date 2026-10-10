@@ -23,6 +23,7 @@ class Chore(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(100), nullable=False)
     reward = db.Column(db.Float, nullable=False)
+    due_date = db.Column(db.DateTime, nullable=True)  # Funder specified completion time
     created_by_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     assigned_to_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
     status = db.Column(db.String(30), default='Open')  # 'Open', 'Claimed', 'Pending Verification', 'Completed'
@@ -277,9 +278,15 @@ def update_pin(user_id):
 def update_settings():
     release_hours = request.form.get('release_hours', '1')
     leaderboard_days = request.form.get('leaderboard_days', '7')
+    penalty_grace_hours = request.form.get('penalty_grace_hours', '0')
+    penalty_percent = request.form.get('penalty_percent', '10')
+
     set_setting('release_hours', release_hours)
     set_setting('leaderboard_days', leaderboard_days)
-    flash("Platform settings updated successfully!", "success")
+    set_setting('penalty_grace_hours', penalty_grace_hours)
+    set_setting('penalty_percent', penalty_percent)
+
+    flash("Platform settings and penalty rules updated successfully!", "success")
     return redirect(url_for('dashboard', user_id=session.get('user_id')))
 
 
@@ -287,7 +294,7 @@ def update_settings():
 def export_backup():
     data = {
         "users": [{"id": u.id, "name": u.name, "role": u.role, "pin": u.pin} for u in User.query.all()],
-        "chores": [{"id": c.id, "title": c.title, "reward": c.reward, "created_by": c.created_by_id, "assigned_to": c.assigned_to_id, "status": c.status} for c in Chore.query.all()],
+        "chores": [{"id": c.id, "title": c.title, "reward": c.reward, "created_by": c.created_by_id, "assigned_to": c.assigned_to_id, "status": c.status, "due_date": c.due_date.strftime('%Y-%m-%dT%H:%M') if c.due_date else None} for c in Chore.query.all()],
         "ledgers": [{"id": l.id, "adult_id": l.adult_id, "kid_id": l.kid_id, "amount_due": l.amount_due, "status": l.status} for l in Ledger.query.all()]
     }
     return Response(
@@ -317,9 +324,10 @@ def upload_backup():
         db.session.commit()
 
         for c_data in data.get("chores", []):
+            due = datetime.strptime(c_data["due_date"], '%Y-%m-%dT%H:%M') if c_data.get("due_date") else None
             c = Chore(
                 id=c_data["id"], title=c_data["title"], reward=c_data["reward"],
-                created_by_id=c_data["created_by"], assigned_to_id=c_data["assigned_to"], status=c_data["status"]
+                created_by_id=c_data["created_by"], assigned_to_id=c_data["assigned_to"], status=c_data["status"], due_date=due
             )
             db.session.add(c)
         db.session.commit()
@@ -359,8 +367,9 @@ def adult_portal(adult):
 
     release_hours = get_setting('release_hours', '1')
     leaderboard_days = get_setting('leaderboard_days', '7')
+    penalty_grace_hours = get_setting('penalty_grace_hours', '0')
+    penalty_percent = get_setting('penalty_percent', '10')
 
-    # Build mailto string for email backup summary
     ledger_text = f"Family Chore Market - Ledger Summary for {adult.name}%0A%0A"
     for l in ledgers:
         ledger_text += f"- {l.kid.name}: R{l.amount_due:.2f} unpaid (Status: {l.status})%0A"
@@ -385,8 +394,8 @@ def adult_portal(adult):
 
         {% if adult.role == 'parent' %}
         <div class="bg-white p-6 rounded-xl shadow-md border border-indigo-100">
-            <h3 class="font-bold text-slate-800 text-lg mb-2">⚙️ Platform Variables & Rules</h3>
-            <form action="/update_settings" method="POST" class="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+            <h3 class="font-bold text-slate-800 text-lg mb-2">⚙️ Platform Variables & System-Wide Penalty Rules</h3>
+            <form action="/update_settings" method="POST" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                     <label class="block text-xs font-semibold text-slate-600 mb-1">Kid Release Buffer (Hours)</label>
                     <input type="number" step="0.5" name="release_hours" value="{{ release_hours }}" required class="border border-slate-300 p-2 rounded-lg w-full text-sm">
@@ -395,9 +404,19 @@ def adult_portal(adult):
                     <label class="block text-xs font-semibold text-slate-600 mb-1">Leaderboard Period (Days)</label>
                     <input type="number" name="leaderboard_days" value="{{ leaderboard_days }}" required class="border border-slate-300 p-2 rounded-lg w-full text-sm">
                 </div>
-                <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">
-                    Save Variables
-                </button>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">Late Penalty Grace Period (Hours)</label>
+                    <input type="number" step="0.5" name="penalty_grace_hours" value="{{ penalty_grace_hours }}" required class="border border-slate-300 p-2 rounded-lg w-full text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">Late Penalty Rate (%)</label>
+                    <input type="number" step="1" name="penalty_percent" value="{{ penalty_percent }}" required class="border border-slate-300 p-2 rounded-lg w-full text-sm">
+                </div>
+                <div class="sm:col-span-2">
+                    <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-lg text-sm transition w-full sm:w-auto">
+                        Save Rules & Variables
+                    </button>
+                </div>
             </form>
         </div>
 
@@ -466,17 +485,19 @@ def adult_portal(adult):
 
         <div class="bg-white p-6 rounded-xl shadow-md">
             <h3 class="font-bold text-slate-800 text-lg mb-3">📝 Post a New Chore</h3>
-            <form action="/post_chore/{{ adult.id }}" method="POST" class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <input type="text" name="title" placeholder="Chore Description (e.g. Clean Bedroom)" required 
-                       class="sm:col-span-2 border border-slate-300 p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                <div class="flex gap-2">
-                    <span class="self-center font-bold text-slate-600">R</span>
-                    <input type="number" step="0.50" min="1" name="reward" placeholder="Reward" required 
-                           class="border border-slate-300 p-2 rounded-lg w-full focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                    <button type="submit" class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-4 py-2 rounded-lg transition">
-                        Post
-                    </button>
+            <form action="/post_chore/{{ adult.id }}" method="POST" class="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                <input type="text" name="title" placeholder="Description (e.g. Dishes)" required 
+                       class="sm:col-span-2 border border-slate-300 p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm">
+                <div class="flex gap-1 items-center">
+                    <span class="font-bold text-slate-600 text-sm">R</span>
+                    <input type="number" step="1" min="1" name="reward" placeholder="Reward" required 
+                           class="border border-slate-300 p-2 rounded-lg w-full focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm">
                 </div>
+                <input type="datetime-local" name="due_date" required 
+                       class="border border-slate-300 p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm">
+                <button type="submit" class="sm:col-span-4 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2 rounded-lg transition text-sm">
+                    Post Chore
+                </button>
             </form>
         </div>
 
@@ -493,7 +514,7 @@ def adult_portal(adult):
                                 </div>
                                 <form action="/adjust_ledger/{{ l.id }}" method="POST" class="mt-1 flex items-center gap-2">
                                     <span class="text-xs text-slate-500">Manual Override R:</span>
-                                    <input type="number" step="0.50" name="amount_due" value="{{ l.amount_due }}" 
+                                    <input type="number" step="1" name="amount_due" value="{{ l.amount_due }}" 
                                            class="border border-slate-300 p-1 text-xs rounded w-24 focus:outline-none focus:ring-1 focus:ring-indigo-500">
                                     <button type="submit" class="bg-slate-700 hover:bg-slate-800 text-white text-xs px-2.5 py-1 rounded transition">
                                         Set Balance
@@ -533,6 +554,7 @@ def adult_portal(adult):
                                 <h4 class="font-bold text-slate-800">{{ c.title }}</h4>
                                 <p class="text-xs text-slate-500">
                                     Reward: R{{ "%.2f"|format(c.reward) }} | 
+                                    Due: {{ c.due_date.strftime('%a %H:%M') if c.due_date else 'No deadline' }} | 
                                     Assignee: {{ c.assignee.name if c.assignee else 'Unassigned' }} | Status: {{ c.status }}
                                 </p>
                             </div>
@@ -589,7 +611,7 @@ def adult_portal(adult):
         </div>
     </div>
     """
-    return render_page(html, adult=adult, kids=kids, all_users=all_users, my_chores=my_chores, ledgers=ledgers, release_hours=release_hours, leaderboard_days=leaderboard_days, audit_chores=audit_chores, filter_period=filter_period, ledger_text=ledger_text)
+    return render_page(html, adult=adult, kids=kids, all_users=all_users, my_chores=my_chores, ledgers=ledgers, release_hours=release_hours, leaderboard_days=leaderboard_days, penalty_grace_hours=penalty_grace_hours, penalty_percent=penalty_percent, audit_chores=audit_chores, filter_period=filter_period, ledger_text=ledger_text)
 
 
 def kid_portal(kid):
@@ -665,7 +687,8 @@ def kid_portal(kid):
                             <div>
                                 <h4 class="font-bold text-slate-800">{{ c.title }}</h4>
                                 <p class="text-xs text-slate-500">
-                                    Posted by: <strong class="text-indigo-600">{{ c.creator.name }}</strong> | Reward: <strong class="text-emerald-600">R{{ "%.2f"|format(c.reward) }}</strong>
+                                    Posted by: <strong class="text-indigo-600">{{ c.creator.name }}</strong> | Reward: <strong class="text-emerald-600">R{{ "%.2f"|format(c.reward) }}</strong> | 
+                                    Due: <strong class="text-slate-700">{{ c.due_date.strftime('%a %H:%M') if c.due_date else 'Flexible' }}</strong>
                                     {% if c.status == 'Claimed' %}
                                         <br><span class="text-amber-600 font-semibold">Claimed by {{ c.assignee.name }}</span>
                                     {% endif %}
@@ -716,7 +739,8 @@ def kid_portal(kid):
                             <div>
                                 <h4 class="font-bold text-slate-800">{{ c.title }}</h4>
                                 <p class="text-xs text-slate-500">
-                                    Funder: {{ c.creator.name }} | R{{ "%.2f"|format(c.reward) }}
+                                    Funder: {{ c.creator.name }} | R{{ "%.2f"|format(c.reward) }} | 
+                                    Due: {{ c.due_date.strftime('%a %H:%M') if c.due_date else 'Flexible' }}
                                 </p>
                             </div>
                             <div>
@@ -749,13 +773,21 @@ def kid_portal(kid):
 @app.route('/post_chore/<int:adult_id>', methods=['POST'])
 def post_chore(adult_id):
     title = request.form.get('title', '').strip()
+    due_date_raw = request.form.get('due_date', '').strip()
     try:
         reward = float(request.form.get('reward', 0))
     except ValueError:
         reward = 0
 
+    due_date = None
+    if due_date_raw:
+        try:
+            due_date = datetime.strptime(due_date_raw, '%Y-%m-%dT%H:%M')
+        except ValueError:
+            due_date = None
+
     if title and reward > 0:
-        chore = Chore(title=title, reward=reward, created_by_id=adult_id, status='Open')
+        chore = Chore(title=title, reward=reward, due_date=due_date, created_by_id=adult_id, status='Open')
         db.session.add(chore)
         db.session.commit()
         flash("Chore posted successfully!", "success")
@@ -811,12 +843,29 @@ def complete_chore(kid_id, chore_id):
 def verify_chore(adult_id, chore_id):
     chore = Chore.query.get_or_404(chore_id)
     if chore.created_by_id == adult_id and chore.status == 'Pending Verification':
+        now = datetime.utcnow()
         chore.status = 'Completed'
-        chore.completed_at = datetime.utcnow()
+        chore.completed_at = now
+
+        final_reward = chore.reward
+        penalty_grace = float(get_setting('penalty_grace_hours', '0'))
+        penalty_rate = float(get_setting('penalty_percent', '10'))
+
+        if chore.due_date:
+            deadline = chore.due_date + timedelta(hours=penalty_grace)
+            if now > deadline:
+                penalty_amount = round(chore.reward * (penalty_rate / 100.0))
+                final_reward = max(0.0, chore.reward - penalty_amount)
+
         ledger = get_or_create_ledger(adult_id=adult_id, kid_id=chore.assigned_to_id)
-        ledger.amount_due += chore.reward
+        ledger.amount_due += final_reward
         db.session.commit()
-        flash("Chore verified! Ledger updated.", "success")
+        
+        if final_reward < chore.reward:
+            flash(f"Chore verified late! Penalty applied: Earned R{final_reward:.0f} (Original R{chore.reward:.0f}).", "success")
+        else:
+            flash("Chore verified on time! Full reward credited.", "success")
+
     return redirect(url_for('dashboard', user_id=adult_id))
 
 
