@@ -77,7 +77,7 @@ def apply_daily_interest():
         if daily_rate_pct <= 0:
             return
         
-        now = datetime.utcnow()
+        now = datetime.now()
         ledgers = Ledger.query.filter(Ledger.amount_due < 0).all()
         for l in ledgers:
             last = l.last_interest_applied or now
@@ -148,7 +148,7 @@ def home():
     users = User.query.all()
     
     lb_days = int(get_setting('leaderboard_days', '7'))
-    cutoff = datetime.utcnow() - timedelta(days=lb_days)
+    cutoff = datetime.now() - timedelta(days=lb_days)
     
     kids = User.query.filter_by(role='kid').all()
     leaderboard = []
@@ -423,9 +423,9 @@ def adult_portal(adult):
     filter_period = request.args.get('filter_period', 'all')
     audit_query = Chore.query.filter(Chore.status == 'Completed')
     if filter_period == '7days':
-        audit_query = audit_query.filter(Chore.completed_at >= datetime.utcnow() - timedelta(days=7))
+        audit_query = audit_query.filter(Chore.completed_at >= datetime.now() - timedelta(days=7))
     elif filter_period == '30days':
-        audit_query = audit_query.filter(Chore.completed_at >= datetime.utcnow() - timedelta(days=30))
+        audit_query = audit_query.filter(Chore.completed_at >= datetime.now() - timedelta(days=30))
     audit_chores = audit_query.order_by(Chore.completed_at.desc()).all()
 
     html = """
@@ -692,7 +692,7 @@ def kid_portal(kid):
     locked_adult_ids = [l.adult_id for l in ledgers if l.status == 'Pending Confirmation']
 
     release_hours = float(get_setting('release_hours', '1'))
-    now = datetime.utcnow()
+    now = datetime.now()
 
     html = """
     <div class="space-y-6">
@@ -879,7 +879,7 @@ def claim_chore(kid_id, chore_id):
     if chore.status == 'Open':
         chore.assigned_to_id = kid_id
         chore.status = 'Claimed'
-        chore.claimed_at = datetime.utcnow()
+        chore.claimed_at = datetime.now()
         db.session.commit()
         flash("Chore claimed successfully!", "success")
     return redirect(url_for('dashboard', user_id=kid_id))
@@ -891,7 +891,7 @@ def release_chore(kid_id, chore_id):
     release_hours = float(get_setting('release_hours', '1'))
     
     if chore.assigned_to_id == kid_id and chore.status == 'Claimed':
-        if chore.claimed_at and (datetime.utcnow() - chore.claimed_at).total_seconds() < (release_hours * 3600):
+        if chore.claimed_at and (datetime.now() - chore.claimed_at).total_seconds() < (release_hours * 3600):
             chore.assigned_to_id = None
             chore.status = 'Open'
             chore.claimed_at = None
@@ -907,7 +907,7 @@ def complete_chore(kid_id, chore_id):
     chore = Chore.query.get_or_404(chore_id)
     if chore.assigned_to_id == kid_id and chore.status == 'Claimed':
         chore.status = 'Pending Verification'
-        chore.completed_at = datetime.utcnow()
+        chore.completed_at = datetime.now()
         db.session.commit()
         flash("Chore submitted for verification!", "success")
     return redirect(url_for('dashboard', user_id=kid_id))
@@ -947,7 +947,7 @@ def pay_kid(adult_id, kid_id):
             ledger.pending_payout = payout_amt
             ledger.amount_due -= payout_amt
             ledger.status = 'Pending Confirmation'
-            ledger.last_interest_applied = datetime.utcnow()
+            ledger.last_interest_applied = datetime.now()
             db.session.commit()
             flash(f"Payout / Advance of R{payout_amt:.2f} initiated. Waiting for kid to confirm receipt.", "success")
         else:
@@ -970,7 +970,6 @@ def confirm_payment(kid_id, ledger_id):
 
 with app.app_context():
     db.create_all()
-    # Auto-migrate: safely add missing last_interest_applied column to existing PostgreSQL ledger table
     try:
         with db.engine.connect() as conn:
             conn.execute(db.text("ALTER TABLE ledger ADD COLUMN IF NOT EXISTS last_interest_applied TIMESTAMP;"))
