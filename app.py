@@ -262,7 +262,7 @@ def verify_pin(user_id):
         return redirect(url_for('dashboard', user_id=user.id))
     else:
         flash("Incorrect PIN. Please try again.", "error")
-        return redirect(url_for('access_profile', user_id=user.id))
+        return redirect(url_for('access_profile', user_id=user_id))
 
 
 @app.route('/dashboard/<int:user_id>')
@@ -726,13 +726,16 @@ def kid_portal(kid):
     penalty_rate = float(get_setting('penalty_percent', '10'))
     now = get_sast_now()
 
-    # Pre-calculate flags in Python to avoid Jinja timedelta scope issues
+    # Pre-calculate flags in Python
     for c in uncompleted_chores:
         c.is_overdue = bool(c.due_date and now > (c.due_date + timedelta(hours=penalty_grace_hours)))
         c.discounted_reward = c.reward - (c.reward * penalty_rate / 100.0)
 
     for c in my_chores:
-        c.is_within_buffer = bool(c.claimed_at and (now - c.claimed_at).total_seconds() < (release_hours * 3600))
+        # A release is ONLY free if within release hours AND the task deadline has not passed yet
+        deadline_passed = bool(c.due_date and now > (c.due_date + timedelta(hours=penalty_grace_hours)))
+        within_buffer = bool(c.claimed_at and (now - c.claimed_at).total_seconds() < (release_hours * 3600))
+        c.is_within_buffer = within_buffer and (not deadline_passed)
 
     html = """
     <div class="space-y-6">
@@ -957,11 +960,14 @@ def claim_chore(kid_id, chore_id):
 def release_chore(kid_id, chore_id):
     chore = Chore.query.get_or_404(chore_id)
     release_hours = float(get_setting('release_hours', '1'))
+    penalty_grace_hours = float(get_setting('penalty_grace_hours', '0'))
     penalty_rate = float(get_setting('penalty_percent', '10'))
     now = get_sast_now()
 
     if chore.assigned_to_id == kid_id and chore.status == 'Claimed':
-        is_within_buffer = chore.claimed_at and (now - chore.claimed_at).total_seconds() < (release_hours * 3600)
+        deadline_passed = bool(chore.due_date and now > (chore.due_date + timedelta(hours=penalty_grace_hours)))
+        within_buffer = bool(chore.claimed_at and (now - chore.claimed_at).total_seconds() < (release_hours * 3600))
+        is_within_buffer = within_buffer and (not deadline_passed)
         
         if is_within_buffer:
             chore.assigned_to_id = None
@@ -979,7 +985,7 @@ def release_chore(kid_id, chore_id):
                 adult_id=chore.created_by_id,
                 chore_title=chore.title,
                 penalty_amount=penalty_amt,
-                reason="Released claimed chore past grace buffer.",
+                reason="Released claimed chore past deadline or grace buffer.",
                 created_at=now
             )
             db.session.add(log)
@@ -1088,7 +1094,7 @@ def confirm_payment(kid_id, ledger_id):
         ledger.status = 'Settled'
         db.session.commit()
         flash("Payment receipt confirmed! Ledger updated.", "success")
-    return redirect(url_for('dashboard', user_id=kid_id))
+    return redirect(url_for('dashboard', kid_id))
 
 
 with app.app_context():
