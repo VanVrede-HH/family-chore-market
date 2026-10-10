@@ -83,9 +83,8 @@ def apply_daily_interest():
             last = l.last_interest_applied or now
             days_passed = (now - last).total_seconds() / 86400.0
             if days_passed >= 1.0:
-                # Apply compound interest on negative balance (debt)
                 interest = abs(l.amount_due) * (daily_rate_pct / 100.0) * days_passed
-                l.amount_due -= interest  # Make it more negative
+                l.amount_due -= interest
                 l.last_interest_applied = now
         db.session.commit()
     except Exception:
@@ -664,7 +663,6 @@ def kid_portal(kid):
     uncompleted_chores = Chore.query.filter(Chore.status.in_(['Open', 'Claimed', 'Pending Verification'])).all()
     my_chores = Chore.query.filter_by(assigned_to_id=kid.id).all()
     ledgers = Ledger.query.filter_by(kid_id=kid.id).all()
-    # Block claiming chores ONLY for the specific funder whose payment is pending confirmation
     locked_adult_ids = [l.adult_id for l in ledgers if l.status == 'Pending Confirmation']
 
     release_hours = float(get_setting('release_hours', '1'))
@@ -925,7 +923,7 @@ def pay_kid(adult_id, kid_id):
         payout_amt = float(request.form.get('payout_amount', 0))
         if payout_amt > 0:
             ledger.pending_payout = payout_amt
-            ledger.amount_due -= payout_amt  # Reduces balance or pushes into negative (loan)
+            ledger.amount_due -= payout_amt
             ledger.status = 'Pending Confirmation'
             ledger.last_interest_applied = datetime.utcnow()
             db.session.commit()
@@ -950,6 +948,14 @@ def confirm_payment(kid_id, ledger_id):
 
 with app.app_context():
     db.create_all()
+    # Auto-migrate: safely add missing last_interest_applied column to existing PostgreSQL ledger table
+    try:
+        with db.engine.connect() as conn:
+            conn.execute(db.text("ALTER TABLE ledger ADD COLUMN IF NOT EXISTS last_interest_applied TIMESTAMP;"))
+            conn.commit()
+    except Exception:
+        pass
+
     if not User.query.first():
         mom = User(name="Mom", role="parent", pin="1234")
         db.session.add(mom)
