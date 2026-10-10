@@ -23,7 +23,7 @@ db = SQLAlchemy(app)
 SAST = timezone(timedelta(hours=2))
 
 def get_sast_now():
-    return datetime.now(SAST).replace(tzinfo=None)  # Naive datetime adjusted for SAST
+    return datetime.now(SAST).replace(tzinfo=None)
 
 # ---------------------------------------------------------
 # Database Models
@@ -108,44 +108,6 @@ def apply_daily_interest():
     except Exception:
         pass
 
-def check_and_auto_release_chores():
-    try:
-        now = get_sast_now()
-        penalty_grace_hours = float(get_setting('penalty_grace_hours', '0'))
-        penalty_rate = float(get_setting('penalty_percent', '10'))
-
-        claimed_chores = Chore.query.filter_by(status='Claimed').all()
-        for c in claimed_chores:
-            if c.due_date:
-                deadline = c.due_date + timedelta(hours=penalty_grace_hours)
-                if now > deadline:
-                    kid_id = c.assigned_to_id
-                    adult_id = c.created_by_id
-                    
-                    penalty_amt = round(c.reward * (penalty_rate / 100.0), 2)
-                    
-                    if kid_id and penalty_amt > 0:
-                        ledger = get_or_create_ledger(adult_id=adult_id, kid_id=kid_id)
-                        ledger.amount_due -= penalty_amt  
-                        
-                        log = PenaltyLog(
-                            kid_id=kid_id,
-                            adult_id=adult_id,
-                            chore_title=c.title,
-                            penalty_amount=penalty_amt,
-                            reason=f"Chore passed due date ({c.due_date.strftime('%d %b %H:%M')}) without being completed.",
-                            created_at=now
-                        )
-                        db.session.add(log)
-
-                    c.status = 'Open'
-                    c.assigned_to_id = None
-                    c.claimed_at = None
-
-        db.session.commit()
-    except Exception:
-        pass
-
 def get_or_create_ledger(adult_id, kid_id):
     ledger = Ledger.query.filter_by(adult_id=adult_id, kid_id=kid_id).first()
     if not ledger:
@@ -201,7 +163,6 @@ def render_page(inner_html, **context):
 @app.route('/')
 def home():
     apply_daily_interest()
-    check_and_auto_release_chores()
     users = User.query.all()
     
     lb_days = int(get_setting('leaderboard_days', '7'))
@@ -307,7 +268,6 @@ def verify_pin(user_id):
 @app.route('/dashboard/<int:user_id>')
 def dashboard(user_id):
     apply_daily_interest()
-    check_and_auto_release_chores()
     if session.get('user_id') != user_id:
         flash("Please log in with your profile PIN first.", "error")
         return redirect(url_for('access_profile', user_id=user_id))
@@ -460,15 +420,18 @@ def adult_portal(adult):
     penalty_grace_hours = float(get_setting('penalty_grace_hours', '0'))
     penalty_percent = float(get_setting('penalty_percent', '10'))
     daily_interest_percent = get_setting('daily_interest_percent', '0')
+    now = get_sast_now()
 
     chore_calcs = {}
     for c in uncompleted_chores:
         if c.status == 'Pending Verification':
             suggested_reward = c.reward
             suggested_penalty = 0.0
-            if c.due_date and c.completed_at:
+            if c.due_date:
                 deadline = c.due_date + timedelta(hours=penalty_grace_hours)
-                if c.completed_at > deadline:
+                # Compare against completion submission time if available, otherwise current time
+                check_time = c.completed_at or now
+                if check_time > deadline:
                     suggested_penalty = round(c.reward * (penalty_percent / 100.0), 2)
                     suggested_reward = max(0.0, c.reward - suggested_penalty)
             chore_calcs[c.id] = {"reward": suggested_reward, "penalty": suggested_penalty}
@@ -480,9 +443,9 @@ def adult_portal(adult):
     filter_period = request.args.get('filter_period', 'all')
     audit_query = Chore.query.filter(Chore.status == 'Completed')
     if filter_period == '7days':
-        audit_query = audit_query.filter(Chore.completed_at >= get_sast_now() - timedelta(days=7))
+        audit_query = audit_query.filter(Chore.completed_at >= now - timedelta(days=7))
     elif filter_period == '30days':
-        audit_query = audit_query.filter(Chore.completed_at >= get_sast_now() - timedelta(days=30))
+        audit_query = audit_query.filter(Chore.completed_at >= now - timedelta(days=30))
     audit_chores = audit_query.order_by(Chore.completed_at.desc()).all()
 
     html = """
@@ -675,9 +638,18 @@ def adult_portal(adult):
                                         Assignee: <strong>{{ c.assignee.name if c.assignee else 'Unassigned' }}</strong> | Status: <strong class="text-indigo-600">{{ c.status }}</strong>
                                     </p>
                                 </div>
-                                <span class="px-2.5 py-1 text-xs rounded-full font-bold bg-slate-200 text-slate-700">
-                                    {{ c.status }}
-                                </span>
+                                <div class="flex items-center gap-2">
+                                    {% if c.status == 'Claimed' and (adult.role == 'parent' or c.created_by_id == adult.id) %}
+                                        <form action="/force_release_chore/{{ adult.id }}/{{ c.id }}" method="POST" onsubmit="return confirm('Release this chore and apply penalty to assignee?');">
+                                            <button type="submit" class="bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold px-3 py-1.5 rounded transition">
+                                                Force Release
+                                            </button>
+                                        </form>
+                                    {% endif %}
+                                    <span class="px-2.5 py-1 text-xs rounded-full font-bold bg-slate-200 text-slate-700">
+                                        {{ c.status }}
+                                    </span>
+                                </div>
                             </div>
 
                             {% if c.status == 'Pending Verification' and c.created_by_id == adult.id %}
@@ -751,6 +723,8 @@ def kid_portal(kid):
     locked_adult_ids = [l.adult_id for l in ledgers if l.status == 'Pending Confirmation']
 
     release_hours = float(get_setting('release_hours', '1'))
+    penalty_grace_hours = float(get_setting('penalty_grace_hours', '0'))
+    penalty_rate = float(get_setting('penalty_percent', '10'))
     now = get_sast_now()
 
     html = """
@@ -812,8 +786,8 @@ def kid_portal(kid):
 
         {% if penalty_logs %}
         <div class="bg-red-50 border-l-4 border-red-500 p-6 rounded-r-xl shadow-md">
-            <h3 class="font-bold text-red-800 text-lg mb-2">⚠️ Abandoned / Overdue Penalties</h3>
-            <p class="text-xs text-red-600 mb-3">Penalties applied directly to your ledger balance for claimed chores that passed their deadline:</p>
+            <h3 class="font-bold text-red-800 text-lg mb-2">⚠️ Penalty / Release Log</h3>
+            <p class="text-xs text-red-600 mb-3">Penalties applied to your ledger balance for released or overdue chores:</p>
             <div class="divide-y divide-red-200 text-xs">
                 {% for pl in penalty_logs %}
                     <div class="py-2 flex justify-between items-center">
@@ -836,11 +810,24 @@ def kid_portal(kid):
             {% if uncompleted_chores %}
                 <div class="space-y-3">
                     {% for c in uncompleted_chores %}
+                        {% set is_overdue = c.due_date and now > (c.due_date + timedelta(hours=penalty_grace_hours)) %}
+                        {% set discounted_reward = c.reward - (c.reward * penalty_rate / 100.0) %}
                         <div class="border p-3 rounded-lg flex justify-between items-center">
                             <div>
-                                <h4 class="font-bold text-slate-800">{{ c.title }}</h4>
+                                <h4 class="font-bold text-slate-800">
+                                    {{ c.title }} 
+                                    {% if is_overdue and c.status == 'Open' %}
+                                        <span class="ml-2 bg-red-100 text-red-700 text-2xs px-2 py-0.5 rounded font-bold">OVERDUE (Worth R{{ "%.2f"|format(discounted_reward) }})</span>
+                                    {% endif %}
+                                </h4>
                                 <p class="text-xs text-slate-500">
-                                    Posted by: <strong class="text-indigo-600">{{ c.creator.name }}</strong> | Reward: <strong class="text-emerald-600">R{{ "%.2f"|format(c.reward) }}</strong> | 
+                                    Posted by: <strong class="text-indigo-600">{{ c.creator.name }}</strong> | 
+                                    Reward: 
+                                    {% if is_overdue and c.status == 'Open' %}
+                                        <strong class="text-red-600 line-through">R{{ "%.2f"|format(c.reward) }}</strong> <strong class="text-emerald-600">R{{ "%.2f"|format(discounted_reward) }}</strong>
+                                    {% else %}
+                                        <strong class="text-emerald-600">R{{ "%.2f"|format(c.reward) }}</strong>
+                                    {% endif %} | 
                                     Due: <strong class="text-slate-700">{{ c.due_date.strftime('%a %H:%M') if c.due_date else 'Flexible' }}</strong>
                                     {% if c.status in ['Claimed', 'Pending Verification'] %}
                                         <br><span class="text-amber-600 font-semibold">{{ c.status }} by {{ c.assignee.name if c.assignee else 'Someone' }}</span>
@@ -856,21 +843,12 @@ def kid_portal(kid):
                                     {% else %}
                                         <form action="/claim_chore/{{ kid.id }}/{{ c.id }}" method="POST">
                                             <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3 py-1.5 rounded transition">
-                                                Claim
+                                                {% if is_overdue %}Claim Overdue{% else %}Claim{% endif %}
                                             </button>
                                         </form>
                                     {% endif %}
                                 {% elif c.status == 'Claimed' and c.assigned_to_id == kid.id %}
-                                    {% set can_release = c.claimed_at and (now - c.claimed_at).total_seconds() < (release_hours * 3600) %}
-                                    {% if can_release %}
-                                        <form action="/release_chore/{{ kid.id }}/{{ c.id }}" method="POST">
-                                            <button type="submit" class="bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold px-3 py-1.5 rounded transition" title="Release back to pool without penalty">
-                                                Release
-                                            </button>
-                                        </form>
-                                    {% else %}
-                                        <span class="text-xs text-slate-400">Claimed</span>
-                                    {% endif %}
+                                    <span class="text-xs text-slate-400">Claimed</span>
                                 {% else %}
                                     <span class="text-xs text-slate-400">{{ c.status }}</span>
                                 {% endif %}
@@ -888,6 +866,7 @@ def kid_portal(kid):
             {% if my_chores %}
                 <div class="space-y-3">
                     {% for c in my_chores %}
+                        {% set is_within_buffer = c.claimed_at and (now - c.claimed_at).total_seconds() < (release_hours * 3600) %}
                         <div class="border p-3 rounded-lg flex justify-between items-center">
                             <div>
                                 <h4 class="font-bold text-slate-800">{{ c.title }}</h4>
@@ -896,11 +875,16 @@ def kid_portal(kid):
                                     Due: {{ c.due_date.strftime('%a %H:%M') if c.due_date else 'Flexible' }}
                                 </p>
                             </div>
-                            <div>
+                            <div class="flex items-center gap-2">
                                 {% if c.status == 'Claimed' %}
                                     <form action="/complete_chore/{{ kid.id }}/{{ c.id }}" method="POST">
                                         <button type="submit" class="bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold px-3 py-1.5 rounded transition">
                                             Mark Done
+                                        </button>
+                                    </form>
+                                    <form action="/release_chore/{{ kid.id }}/{{ c.id }}" method="POST" onsubmit="return confirm('Releasing this chore will deduct a penalty from your ledger balance. Proceed?');">
+                                        <button type="submit" class="bg-red-500 hover:bg-red-600 text-white text-xs font-bold px-3 py-1.5 rounded transition" title="Release chore and incur penalty">
+                                            {% if is_within_buffer %}Release (Free){% else %}Release (Penalty){% endif %}
                                         </button>
                                     </form>
                                 {% else %}
@@ -969,17 +953,73 @@ def claim_chore(kid_id, chore_id):
 def release_chore(kid_id, chore_id):
     chore = Chore.query.get_or_404(chore_id)
     release_hours = float(get_setting('release_hours', '1'))
-    
+    penalty_rate = float(get_setting('penalty_percent', '10'))
+    now = get_sast_now()
+
     if chore.assigned_to_id == kid_id and chore.status == 'Claimed':
-        if chore.claimed_at and (get_sast_now() - chore.claimed_at).total_seconds() < (release_hours * 3600):
+        is_within_buffer = chore.claimed_at and (now - chore.claimed_at).total_seconds() < (release_hours * 3600)
+        
+        if is_within_buffer:
             chore.assigned_to_id = None
             chore.status = 'Open'
             chore.claimed_at = None
             db.session.commit()
-            flash("Chore released back to the open market.", "success")
+            flash("Chore released back to open market without penalty.", "success")
         else:
-            flash("Release window has expired.", "error")
+            # Deduct penalty
+            penalty_amt = round(chore.reward * (penalty_rate / 100.0), 2)
+            ledger = get_or_create_ledger(adult_id=chore.created_by_id, kid_id=kid_id)
+            ledger.amount_due -= penalty_amt
+
+            log = PenaltyLog(
+                kid_id=kid_id,
+                adult_id=chore.created_by_id,
+                chore_title=chore.title,
+                penalty_amount=penalty_amt,
+                reason="Released claimed chore past grace buffer.",
+                created_at=now
+            )
+            db.session.add(log)
+
+            chore.assigned_to_id = None
+            chore.status = 'Open'
+            chore.claimed_at = None
+            db.session.commit()
+            flash(f"Chore released. Penalty of R{penalty_amt:.2f} applied to your ledger balance.", "success")
+
     return redirect(url_for('dashboard', user_id=kid_id))
+
+
+@app.route('/force_release_chore/<int:adult_id>/<int:chore_id>', methods=['POST'])
+def force_release_chore(adult_id, chore_id):
+    chore = Chore.query.get_or_404(chore_id)
+    penalty_rate = float(get_setting('penalty_percent', '10'))
+    now = get_sast_now()
+
+    if chore.status == 'Claimed' and chore.assigned_to_id:
+        kid_id = chore.assigned_to_id
+        penalty_amt = round(chore.reward * (penalty_rate / 100.0), 2)
+        
+        ledger = get_or_create_ledger(adult_id=chore.created_by_id, kid_id=kid_id)
+        ledger.amount_due -= penalty_amt
+
+        log = PenaltyLog(
+            kid_id=kid_id,
+            adult_id=chore.created_by_id,
+            chore_title=chore.title,
+            penalty_amount=penalty_amt,
+            reason="Force-released by adult/parent.",
+            created_at=now
+        )
+        db.session.add(log)
+
+        chore.assigned_to_id = None
+        chore.status = 'Open'
+        chore.claimed_at = None
+        db.session.commit()
+        flash(f"Chore force-released. Penalty of R{penalty_amt:.2f} applied to {chore.assignee.name if chore.assignee else 'kid'}'s ledger.", "success")
+
+    return redirect(url_for('dashboard', user_id=adult_id))
 
 
 @app.route('/complete_chore/<int:kid_id>/<int:chore_id>', methods=['POST'])
