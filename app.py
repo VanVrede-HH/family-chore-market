@@ -153,7 +153,6 @@ BASE_LAYOUT = """
 def render_page(inner_html, **context):
     from jinja2 import Template
     context['get_flashed_messages'] = get_flashed_messages
-    context['timedelta'] = timedelta  # Explicitly make timedelta available in templates
     rendered_inner = Template(inner_html).render(**context)
     return Template(BASE_LAYOUT).render(content=rendered_inner, **context)
 
@@ -727,6 +726,14 @@ def kid_portal(kid):
     penalty_rate = float(get_setting('penalty_percent', '10'))
     now = get_sast_now()
 
+    # Pre-calculate flags in Python to avoid Jinja timedelta scope issues
+    for c in uncompleted_chores:
+        c.is_overdue = bool(c.due_date and now > (c.due_date + timedelta(hours=penalty_grace_hours)))
+        c.discounted_reward = c.reward - (c.reward * penalty_rate / 100.0)
+
+    for c in my_chores:
+        c.is_within_buffer = bool(c.claimed_at and (now - c.claimed_at).total_seconds() < (release_hours * 3600))
+
     html = """
     <div class="space-y-6">
         <div class="bg-white p-6 rounded-xl shadow-md border-l-4 border-emerald-500 flex justify-between items-center">
@@ -810,21 +817,19 @@ def kid_portal(kid):
             {% if uncompleted_chores %}
                 <div class="space-y-3">
                     {% for c in uncompleted_chores %}
-                        {% set is_overdue = c.due_date and now > (c.due_date + timedelta(hours=penalty_grace_hours)) %}
-                        {% set discounted_reward = c.reward - (c.reward * penalty_rate / 100.0) %}
                         <div class="border p-3 rounded-lg flex justify-between items-center">
                             <div>
                                 <h4 class="font-bold text-slate-800">
                                     {{ c.title }} 
-                                    {% if is_overdue and c.status == 'Open' %}
-                                        <span class="ml-2 bg-red-100 text-red-700 text-2xs px-2 py-0.5 rounded font-bold">OVERDUE (Worth R{{ "%.2f"|format(discounted_reward) }})</span>
+                                    {% if c.is_overdue and c.status == 'Open' %}
+                                        <span class="ml-2 bg-red-100 text-red-700 text-2xs px-2 py-0.5 rounded font-bold">OVERDUE (Worth R{{ "%.2f"|format(c.discounted_reward) }})</span>
                                     {% endif %}
                                 </h4>
                                 <p class="text-xs text-slate-500">
                                     Posted by: <strong class="text-indigo-600">{{ c.creator.name }}</strong> | 
                                     Reward: 
-                                    {% if is_overdue and c.status == 'Open' %}
-                                        <strong class="text-red-600 line-through">R{{ "%.2f"|format(c.reward) }}</strong> <strong class="text-emerald-600">R{{ "%.2f"|format(discounted_reward) }}</strong>
+                                    {% if c.is_overdue and c.status == 'Open' %}
+                                        <strong class="text-red-600 line-through">R{{ "%.2f"|format(c.reward) }}</strong> <strong class="text-emerald-600">R{{ "%.2f"|format(c.discounted_reward) }}</strong>
                                     {% else %}
                                         <strong class="text-emerald-600">R{{ "%.2f"|format(c.reward) }}</strong>
                                     {% endif %} | 
@@ -843,7 +848,7 @@ def kid_portal(kid):
                                     {% else %}
                                         <form action="/claim_chore/{{ kid.id }}/{{ c.id }}" method="POST">
                                             <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3 py-1.5 rounded transition">
-                                                {% if is_overdue %}Claim Overdue{% else %}Claim{% endif %}
+                                                {% if c.is_overdue %}Claim Overdue{% else %}Claim{% endif %}
                                             </button>
                                         </form>
                                     {% endif %}
@@ -866,7 +871,6 @@ def kid_portal(kid):
             {% if my_chores %}
                 <div class="space-y-3">
                     {% for c in my_chores %}
-                        {% set is_within_buffer = c.claimed_at and (now - c.claimed_at).total_seconds() < (release_hours * 3600) %}
                         <div class="border p-3 rounded-lg flex justify-between items-center">
                             <div>
                                 <h4 class="font-bold text-slate-800">{{ c.title }}</h4>
@@ -884,7 +888,7 @@ def kid_portal(kid):
                                     </form>
                                     <form action="/release_chore/{{ kid.id }}/{{ c.id }}" method="POST" onsubmit="return confirm('Releasing this chore will deduct a penalty from your ledger balance. Proceed?');">
                                         <button type="submit" class="bg-red-500 hover:bg-red-600 text-white text-xs font-bold px-3 py-1.5 rounded transition" title="Release chore and incur penalty">
-                                            {% if is_within_buffer %}Release (Free){% else %}Release (Penalty){% endif %}
+                                            {% if c.is_within_buffer %}Release (Free){% else %}Release (Penalty){% endif %}
                                         </button>
                                     </form>
                                 {% else %}
