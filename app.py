@@ -172,16 +172,6 @@ def home():
                 {% endfor %}
             </div>
         </div>
-
-        <div class="bg-white p-6 rounded-xl shadow-md border border-slate-200">
-            <h3 class="font-bold text-slate-800 text-md mb-2">🔄 Restore Backup (JSON)</h3>
-            <form action="/upload_backup" method="POST" enctype="multipart/form-data" class="flex flex-col sm:flex-row gap-2">
-                <input type="file" name="backup_file" accept=".json" required class="text-xs text-slate-500 file:mr-2 file:py-1.5 file:px-3 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200 flex-grow">
-                <button type="submit" class="bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold px-4 py-2 rounded transition">
-                    Restore
-                </button>
-            </form>
-        </div>
     </div>
     """
     return render_page(html, users=users, leaderboard=leaderboard, lb_days=lb_days)
@@ -308,11 +298,11 @@ def export_backup():
 def upload_backup():
     if 'backup_file' not in request.files:
         flash("No backup file selected.", "error")
-        return redirect(url_for('home'))
+        return redirect(url_for('dashboard', user_id=session.get('user_id')))
     file = request.files['backup_file']
     if file.filename == '':
         flash("No backup file selected.", "error")
-        return redirect(url_for('home'))
+        return redirect(url_for('dashboard', user_id=session.get('user_id')))
     try:
         data = json.load(file)
         db.drop_all()
@@ -343,6 +333,10 @@ def upload_backup():
         flash("Backup restored successfully!", "success")
     except Exception as e:
         flash(f"Error restoring backup: {str(e)}", "error")
+    
+    current_user_id = session.get('user_id')
+    if current_user_id:
+        return redirect(url_for('dashboard', user_id=current_user_id))
     return redirect(url_for('home'))
 
 
@@ -362,7 +356,13 @@ def adjust_ledger(ledger_id):
 def adult_portal(adult):
     kids = User.query.filter_by(role='kid').all()
     all_users = User.query.all()
-    my_chores = Chore.query.filter_by(created_by_id=adult.id).all()
+    
+    # Filter uncompleted chores based on role (Parent sees all, Adult/Funder sees only their own)
+    if adult.role == 'parent':
+        uncompleted_chores = Chore.query.filter(Chore.status.in_(['Open', 'Claimed', 'Pending Verification'])).all()
+    else:
+        uncompleted_chores = Chore.query.filter(Chore.created_by_id == adult.id, Chore.status.in_(['Open', 'Claimed', 'Pending Verification'])).all()
+
     ledgers = Ledger.query.filter_by(adult_id=adult.id).all()
 
     release_hours = get_setting('release_hours', '1')
@@ -422,8 +422,8 @@ def adult_portal(adult):
 
         <div class="bg-white p-6 rounded-xl shadow-md border border-indigo-100">
             <h3 class="font-bold text-slate-800 text-lg mb-2">💾 Data Backup & Recovery</h3>
-            <p class="text-slate-500 text-sm mb-4">Download a local JSON backup or share your active ledger summary via email.</p>
-            <div class="flex flex-wrap gap-3">
+            <p class="text-slate-500 text-sm mb-4">Download a local JSON backup, restore from a backup file, or share your ledger summary via email.</p>
+            <div class="flex flex-wrap gap-3 items-center">
                 <a href="/export_backup" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">
                     ⬇️ Download JSON Backup
                 </a>
@@ -431,6 +431,12 @@ def adult_portal(adult):
                     📧 Email Ledger Summary
                 </a>
             </div>
+            <form action="/upload_backup" method="POST" enctype="multipart/form-data" class="mt-4 pt-4 border-t flex flex-col sm:flex-row gap-2 items-center">
+                <input type="file" name="backup_file" accept=".json" required class="text-xs text-slate-500 file:mr-2 file:py-1.5 file:px-3 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200 flex-grow">
+                <button type="submit" class="bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold px-4 py-2 rounded transition">
+                    🔄 Restore Backup
+                </button>
+            </form>
         </div>
 
         <div class="bg-white p-6 rounded-xl shadow-md">
@@ -545,21 +551,23 @@ def adult_portal(adult):
         </div>
 
         <div class="bg-white p-6 rounded-xl shadow-md">
-            <h3 class="font-bold text-slate-800 text-lg mb-3">📋 Chores Posted by You</h3>
-            {% if my_chores %}
+            <h3 class="font-bold text-slate-800 text-lg mb-3">
+                📋 Uncompleted Chores {% if adult.role == 'parent' %}(All Household){% else %}(Posted by You){% endif %}
+            </h3>
+            {% if uncompleted_chores %}
                 <div class="space-y-3">
-                    {% for c in my_chores %}
+                    {% for c in uncompleted_chores %}
                         <div class="border p-3 rounded-lg flex justify-between items-center">
                             <div>
                                 <h4 class="font-bold text-slate-800">{{ c.title }}</h4>
                                 <p class="text-xs text-slate-500">
-                                    Reward: R{{ "%.2f"|format(c.reward) }} | 
+                                    Funder: <strong>{{ c.creator.name }}</strong> | Reward: R{{ "%.2f"|format(c.reward) }} | 
                                     Due: {{ c.due_date.strftime('%a %H:%M') if c.due_date else 'No deadline' }} | 
-                                    Assignee: {{ c.assignee.name if c.assignee else 'Unassigned' }} | Status: {{ c.status }}
+                                    Assignee: {{ c.assignee.name if c.assignee else 'Unassigned' }} | Status: <strong class="text-indigo-600">{{ c.status }}</strong>
                                 </p>
                             </div>
                             <div>
-                                {% if c.status == 'Pending Verification' %}
+                                {% if c.status == 'Pending Verification' and c.created_by_id == adult.id %}
                                     <form action="/verify_chore/{{ adult.id }}/{{ c.id }}" method="POST">
                                         <button type="submit" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3 py-1.5 rounded transition">
                                             Verify & Approve
@@ -575,7 +583,7 @@ def adult_portal(adult):
                     {% endfor %}
                 </div>
             {% else %}
-                <p class="text-slate-500 text-sm italic">You haven't posted any chores yet.</p>
+                <p class="text-slate-500 text-sm italic">No uncompleted chores right now.</p>
             {% endif %}
         </div>
 
@@ -611,11 +619,11 @@ def adult_portal(adult):
         </div>
     </div>
     """
-    return render_page(html, adult=adult, kids=kids, all_users=all_users, my_chores=my_chores, ledgers=ledgers, release_hours=release_hours, leaderboard_days=leaderboard_days, penalty_grace_hours=penalty_grace_hours, penalty_percent=penalty_percent, audit_chores=audit_chores, filter_period=filter_period, ledger_text=ledger_text)
+    return render_page(html, adult=adult, kids=kids, all_users=all_users, uncompleted_chores=uncompleted_chores, ledgers=ledgers, release_hours=release_hours, leaderboard_days=leaderboard_days, penalty_grace_hours=penalty_grace_hours, penalty_percent=penalty_percent, audit_chores=audit_chores, filter_period=filter_period, ledger_text=ledger_text)
 
 
 def kid_portal(kid):
-    all_chores = Chore.query.filter(Chore.status.in_(['Open', 'Claimed'])).all()
+    uncompleted_chores = Chore.query.filter(Chore.status.in_(['Open', 'Claimed', 'Pending Verification'])).all()
     my_chores = Chore.query.filter_by(assigned_to_id=kid.id).all()
     ledgers = Ledger.query.filter_by(kid_id=kid.id).all()
     locked_adult_ids = [l.adult_id for l in ledgers if l.status == 'Pending Confirmation']
@@ -679,18 +687,18 @@ def kid_portal(kid):
         </div>
 
         <div class="bg-white p-6 rounded-xl shadow-md">
-            <h3 class="font-bold text-slate-800 text-lg mb-3">🛒 Chore Market</h3>
-            {% if all_chores %}
+            <h3 class="font-bold text-slate-800 text-lg mb-3">🛒 All Uncompleted Household Chores</h3>
+            {% if uncompleted_chores %}
                 <div class="space-y-3">
-                    {% for c in all_chores %}
+                    {% for c in uncompleted_chores %}
                         <div class="border p-3 rounded-lg flex justify-between items-center">
                             <div>
                                 <h4 class="font-bold text-slate-800">{{ c.title }}</h4>
                                 <p class="text-xs text-slate-500">
                                     Posted by: <strong class="text-indigo-600">{{ c.creator.name }}</strong> | Reward: <strong class="text-emerald-600">R{{ "%.2f"|format(c.reward) }}</strong> | 
                                     Due: <strong class="text-slate-700">{{ c.due_date.strftime('%a %H:%M') if c.due_date else 'Flexible' }}</strong>
-                                    {% if c.status == 'Claimed' %}
-                                        <br><span class="text-amber-600 font-semibold">Claimed by {{ c.assignee.name }}</span>
+                                    {% if c.status in ['Claimed', 'Pending Verification'] %}
+                                        <br><span class="text-amber-600 font-semibold">{{ c.status }} by {{ c.assignee.name if c.assignee else 'Someone' }}</span>
                                     {% endif %}
                                 </p>
                             </div>
@@ -719,14 +727,14 @@ def kid_portal(kid):
                                         <span class="text-xs text-slate-400">Claimed</span>
                                     {% endif %}
                                 {% else %}
-                                    <span class="text-xs text-slate-400">Claimed</span>
+                                    <span class="text-xs text-slate-400">{{ c.status }}</span>
                                 {% endif %}
                             </div>
                         </div>
                     {% endfor %}
                 </div>
             {% else %}
-                <p class="text-slate-500 text-sm italic">No chores available right now.</p>
+                <p class="text-slate-500 text-sm italic">No active chores available right now.</p>
             {% endif %}
         </div>
 
@@ -767,7 +775,7 @@ def kid_portal(kid):
         </div>
     </div>
     """
-    return render_page(html, kid=kid, all_chores=all_chores, my_chores=my_chores, ledgers=ledgers, locked_adult_ids=locked_adult_ids, release_hours=release_hours, now=now)
+    return render_page(html, kid=kid, uncompleted_chores=uncompleted_chores, my_chores=my_chores, ledgers=ledgers, locked_adult_ids=locked_adult_ids, release_hours=release_hours, now=now)
 
 
 @app.route('/post_chore/<int:adult_id>', methods=['POST'])
@@ -857,7 +865,7 @@ def verify_chore(adult_id, chore_id):
                 penalty_amount = round(chore.reward * (penalty_rate / 100.0))
                 final_reward = max(0.0, chore.reward - penalty_amount)
 
-        ledger = get_or_create_ledger(adult_id=adult_id, kid_id=chore.assigned_to_id)
+        ledger = get_or_create_ledger(adult_id=adult_id, kid_id=chore.assignee.id)
         ledger.amount_due += final_reward
         db.session.commit()
         
