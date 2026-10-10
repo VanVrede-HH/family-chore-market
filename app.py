@@ -1,6 +1,6 @@
 from flask import Flask, render_template_string, request, redirect, url_for, flash, get_flashed_messages, session, Response
 from flask_sqlalchemy import SQLAlchemy
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 import os
 
@@ -18,6 +18,12 @@ app.config['SQLALCHEMY_DATABASE_URI'] = db_uri
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
+
+# Define South Africa Standard Time (SAST = UTC+2)
+SAST = timezone(timedelta(hours=2))
+
+def get_sast_now():
+    return datetime.now(SAST).replace(tzinfo=None)  # Naive datetime adjusted for SAST
 
 # ---------------------------------------------------------
 # Database Models
@@ -54,6 +60,18 @@ class Ledger(db.Model):
     adult = db.relationship('User', foreign_keys=[adult_id])
     kid = db.relationship('User', foreign_keys=[kid_id])
 
+class PenaltyLog(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    kid_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    adult_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    chore_title = db.Column(db.String(100), nullable=False)
+    penalty_amount = db.Column(db.Float, nullable=False)
+    reason = db.Column(db.String(200), nullable=False)
+    created_at = db.Column(db.DateTime, default=get_sast_now)
+
+    kid = db.relationship('User', foreign_keys=[kid_id])
+    adult = db.relationship('User', foreign_keys=[adult_id])
+
 class Setting(db.Model):
     key = db.Column(db.String(50), primary_key=True)
     value = db.Column(db.String(200), nullable=False)
@@ -77,7 +95,7 @@ def apply_daily_interest():
         if daily_rate_pct <= 0:
             return
         
-        now = datetime.now()
+        now = get_sast_now()
         ledgers = Ledger.query.filter(Ledger.amount_due < 0).all()
         for l in ledgers:
             last = l.last_interest_applied or now
@@ -86,6 +104,44 @@ def apply_daily_interest():
                 interest = abs(l.amount_due) * (daily_rate_pct / 100.0) * days_passed
                 l.amount_due -= interest
                 l.last_interest_applied = now
+        db.session.commit()
+    except Exception:
+        pass
+
+def check_and_auto_release_chores():
+    try:
+        now = get_sast_now()
+        penalty_grace_hours = float(get_setting('penalty_grace_hours', '0'))
+        penalty_rate = float(get_setting('penalty_percent', '10'))
+
+        claimed_chores = Chore.query.filter_by(status='Claimed').all()
+        for c in claimed_chores:
+            if c.due_date:
+                deadline = c.due_date + timedelta(hours=penalty_grace_hours)
+                if now > deadline:
+                    kid_id = c.assigned_to_id
+                    adult_id = c.created_by_id
+                    
+                    penalty_amt = round(c.reward * (penalty_rate / 100.0), 2)
+                    
+                    if kid_id and penalty_amt > 0:
+                        ledger = get_or_create_ledger(adult_id=adult_id, kid_id=kid_id)
+                        ledger.amount_due -= penalty_amt  
+                        
+                        log = PenaltyLog(
+                            kid_id=kid_id,
+                            adult_id=adult_id,
+                            chore_title=c.title,
+                            penalty_amount=penalty_amt,
+                            reason=f"Chore passed due date ({c.due_date.strftime('%d %b %H:%M')}) without being completed.",
+                            created_at=now
+                        )
+                        db.session.add(log)
+
+                    c.status = 'Open'
+                    c.assigned_to_id = None
+                    c.claimed_at = None
+
         db.session.commit()
     except Exception:
         pass
@@ -145,10 +201,11 @@ def render_page(inner_html, **context):
 @app.route('/')
 def home():
     apply_daily_interest()
+    check_and_auto_release_chores()
     users = User.query.all()
     
     lb_days = int(get_setting('leaderboard_days', '7'))
-    cutoff = datetime.now() - timedelta(days=lb_days)
+    cutoff = get_sast_now() - timedelta(days=lb_days)
     
     kids = User.query.filter_by(role='kid').all()
     leaderboard = []
@@ -250,6 +307,7 @@ def verify_pin(user_id):
 @app.route('/dashboard/<int:user_id>')
 def dashboard(user_id):
     apply_daily_interest()
+    check_and_auto_release_chores()
     if session.get('user_id') != user_id:
         flash("Please log in with your profile PIN first.", "error")
         return redirect(url_for('access_profile', user_id=user_id))
@@ -403,7 +461,6 @@ def adult_portal(adult):
     penalty_percent = float(get_setting('penalty_percent', '10'))
     daily_interest_percent = get_setting('daily_interest_percent', '0')
 
-    # Pre-calculate suggested default penalties for pending verification chores
     chore_calcs = {}
     for c in uncompleted_chores:
         if c.status == 'Pending Verification':
@@ -423,9 +480,9 @@ def adult_portal(adult):
     filter_period = request.args.get('filter_period', 'all')
     audit_query = Chore.query.filter(Chore.status == 'Completed')
     if filter_period == '7days':
-        audit_query = audit_query.filter(Chore.completed_at >= datetime.now() - timedelta(days=7))
+        audit_query = audit_query.filter(Chore.completed_at >= get_sast_now() - timedelta(days=7))
     elif filter_period == '30days':
-        audit_query = audit_query.filter(Chore.completed_at >= datetime.now() - timedelta(days=30))
+        audit_query = audit_query.filter(Chore.completed_at >= get_sast_now() - timedelta(days=30))
     audit_chores = audit_query.order_by(Chore.completed_at.desc()).all()
 
     html = """
@@ -689,10 +746,12 @@ def kid_portal(kid):
     uncompleted_chores = Chore.query.filter(Chore.status.in_(['Open', 'Claimed', 'Pending Verification'])).all()
     my_chores = Chore.query.filter_by(assigned_to_id=kid.id).all()
     ledgers = Ledger.query.filter_by(kid_id=kid.id).all()
+    penalty_logs = PenaltyLog.query.filter_by(kid_id=kid.id).order_by(PenaltyLog.created_at.desc()).all()
+    
     locked_adult_ids = [l.adult_id for l in ledgers if l.status == 'Pending Confirmation']
 
     release_hours = float(get_setting('release_hours', '1'))
-    now = datetime.now()
+    now = get_sast_now()
 
     html = """
     <div class="space-y-6">
@@ -750,6 +809,27 @@ def kid_portal(kid):
                 <p class="text-slate-500 text-sm italic">No balances recorded yet.</p>
             {% endif %}
         </div>
+
+        {% if penalty_logs %}
+        <div class="bg-red-50 border-l-4 border-red-500 p-6 rounded-r-xl shadow-md">
+            <h3 class="font-bold text-red-800 text-lg mb-2">⚠️ Abandoned / Overdue Penalties</h3>
+            <p class="text-xs text-red-600 mb-3">Penalties applied directly to your ledger balance for claimed chores that passed their deadline:</p>
+            <div class="divide-y divide-red-200 text-xs">
+                {% for pl in penalty_logs %}
+                    <div class="py-2 flex justify-between items-center">
+                        <div>
+                            <span class="font-bold text-red-800">{{ pl.chore_title }}</span>
+                            <div class="text-red-600 text-2xs">{{ pl.reason }} (Funder: {{ pl.adult.name }})</div>
+                        </div>
+                        <div class="text-right font-bold text-red-700 text-sm">
+                            -R{{ "%.2f"|format(pl.penalty_amount) }}
+                            <div class="text-2xs text-red-400 font-normal">{{ pl.created_at.strftime('%d %b %H:%M') }}</div>
+                        </div>
+                    </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
 
         <div class="bg-white p-6 rounded-xl shadow-md">
             <h3 class="font-bold text-slate-800 text-lg mb-3">🛒 All Uncompleted Household Chores</h3>
@@ -840,7 +920,7 @@ def kid_portal(kid):
         </div>
     </div>
     """
-    return render_page(html, kid=kid, uncompleted_chores=uncompleted_chores, my_chores=my_chores, ledgers=ledgers, locked_adult_ids=locked_adult_ids, release_hours=release_hours, now=now)
+    return render_page(html, kid=kid, uncompleted_chores=uncompleted_chores, my_chores=my_chores, ledgers=ledgers, locked_adult_ids=locked_adult_ids, release_hours=release_hours, now=now, penalty_logs=penalty_logs)
 
 
 @app.route('/post_chore/<int:adult_id>', methods=['POST'])
@@ -879,7 +959,7 @@ def claim_chore(kid_id, chore_id):
     if chore.status == 'Open':
         chore.assigned_to_id = kid_id
         chore.status = 'Claimed'
-        chore.claimed_at = datetime.now()
+        chore.claimed_at = get_sast_now()
         db.session.commit()
         flash("Chore claimed successfully!", "success")
     return redirect(url_for('dashboard', user_id=kid_id))
@@ -891,7 +971,7 @@ def release_chore(kid_id, chore_id):
     release_hours = float(get_setting('release_hours', '1'))
     
     if chore.assigned_to_id == kid_id and chore.status == 'Claimed':
-        if chore.claimed_at and (datetime.now() - chore.claimed_at).total_seconds() < (release_hours * 3600):
+        if chore.claimed_at and (get_sast_now() - chore.claimed_at).total_seconds() < (release_hours * 3600):
             chore.assigned_to_id = None
             chore.status = 'Open'
             chore.claimed_at = None
@@ -907,7 +987,7 @@ def complete_chore(kid_id, chore_id):
     chore = Chore.query.get_or_404(chore_id)
     if chore.assigned_to_id == kid_id and chore.status == 'Claimed':
         chore.status = 'Pending Verification'
-        chore.completed_at = datetime.now()
+        chore.completed_at = get_sast_now()
         db.session.commit()
         flash("Chore submitted for verification!", "success")
     return redirect(url_for('dashboard', user_id=kid_id))
@@ -947,7 +1027,7 @@ def pay_kid(adult_id, kid_id):
             ledger.pending_payout = payout_amt
             ledger.amount_due -= payout_amt
             ledger.status = 'Pending Confirmation'
-            ledger.last_interest_applied = datetime.now()
+            ledger.last_interest_applied = get_sast_now()
             db.session.commit()
             flash(f"Payout / Advance of R{payout_amt:.2f} initiated. Waiting for kid to confirm receipt.", "success")
         else:
