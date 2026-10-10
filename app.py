@@ -909,8 +909,6 @@ def confirm_payment(kid_id, ledger_id):
 
 
 with app.app_context():
-    db.metadata.reflect(bind=db.engine)
-    db.drop_all()
     db.create_all()
     if not User.query.first():
         mom = User(name="Mom", role="parent", pin="1234")
