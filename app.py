@@ -26,7 +26,7 @@ def get_sast_now():
     return datetime.now(SAST).replace(tzinfo=None)
 
 # ---------------------------------------------------------
-# Database Models
+# Database Models (Unchanged - Zero risk to existing data)
 # ---------------------------------------------------------
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -262,7 +262,7 @@ def verify_pin(user_id):
         return redirect(url_for('dashboard', user_id=user.id))
     else:
         flash("Incorrect PIN. Please try again.", "error")
-        return redirect(url_for('access_profile', user_id=user_id))
+        return redirect(url_for('access_profile', user_id=user.id))
 
 
 @app.route('/dashboard/<int:user_id>')
@@ -559,19 +559,40 @@ def adult_portal(adult):
         {% endif %}
 
         <div class="bg-white p-6 rounded-xl shadow-md">
-            <h3 class="font-bold text-slate-800 text-lg mb-3">📝 Post a New Chore</h3>
-            <form action="/post_chore/{{ adult.id }}" method="POST" class="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                <input type="text" name="title" placeholder="Description (e.g. Dishes)" required 
-                       class="sm:col-span-2 border border-slate-300 p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm">
-                <div class="flex gap-1 items-center">
-                    <span class="font-bold text-slate-600 text-sm">R</span>
-                    <input type="number" step="1" min="1" name="reward" placeholder="Reward" required 
-                           class="border border-slate-300 p-2 rounded-lg w-full focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm">
+            <h3 class="font-bold text-slate-800 text-lg mb-3">📝 Post a New Chore (with Recurring Options)</h3>
+            <form action="/post_chore/{{ adult.id }}" method="POST" class="space-y-4">
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <input type="text" name="title" placeholder="Description (e.g. Wash Dishes)" required 
+                           class="sm:col-span-1 border border-slate-300 p-2 rounded-lg text-sm">
+                    <div class="flex gap-1 items-center">
+                        <span class="font-bold text-slate-600 text-sm">R</span>
+                        <input type="number" step="1" min="1" name="reward" placeholder="Reward" required 
+                               class="border border-slate-300 p-2 rounded-lg w-full text-sm">
+                    </div>
+                    <input type="datetime-local" name="due_date" required 
+                           class="border border-slate-300 p-2 rounded-lg text-sm">
                 </div>
-                <input type="datetime-local" name="due_date" required 
-                       class="border border-slate-300 p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm">
-                <button type="submit" class="sm:col-span-4 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2 rounded-lg transition text-sm">
-                    Post Chore
+                
+                <div class="bg-slate-50 p-3 rounded-lg border flex flex-wrap gap-3 items-center text-xs">
+                    <span class="font-bold text-slate-700">🔁 Repeat Settings (Optional):</span>
+                    <div class="flex items-center gap-1">
+                        <span>Every</span>
+                        <input type="number" min="1" value="1" name="repeat_every" class="border p-1 rounded w-16 text-center">
+                    </div>
+                    <select name="repeat_unit" class="border p-1 rounded">
+                        <option value="minutes">Minutes</option>
+                        <option value="hours">Hours</option>
+                        <option value="days" selected>Days</option>
+                    </select>
+                    <div class="flex items-center gap-1">
+                        <span>for</span>
+                        <input type="number" min="1" value="1" name="repeat_count" class="border p-1 rounded w-16 text-center">
+                        <span>times</span>
+                    </div>
+                </div>
+
+                <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 rounded-lg transition text-sm">
+                    Post Chore(s)
                 </button>
             </form>
         </div>
@@ -645,11 +666,29 @@ def adult_portal(adult):
                                             </button>
                                         </form>
                                     {% endif %}
+                                    {% if c.status == 'Open' and (adult.role == 'parent' or c.created_by_id == adult.id) %}
+                                        <form action="/delete_chore/{{ adult.id }}/{{ c.id }}" method="POST" onsubmit="return confirm('Delete this open chore?');">
+                                            <button type="submit" class="bg-red-500 hover:bg-red-600 text-white text-xs font-bold px-3 py-1.5 rounded transition">
+                                                Delete
+                                            </button>
+                                        </form>
+                                    {% endif %}
                                     <span class="px-2.5 py-1 text-xs rounded-full font-bold bg-slate-200 text-slate-700">
                                         {{ c.status }}
                                     </span>
                                 </div>
                             </div>
+
+                            {% if c.status == 'Open' and (adult.role == 'parent' or c.created_by_id == adult.id) %}
+                                <form action="/edit_chore/{{ adult.id }}/{{ c.id }}" method="POST" class="pt-3 border-t grid grid-cols-1 sm:grid-cols-4 gap-2 items-end">
+                                    <input type="text" name="title" value="{{ c.title }}" required class="border p-1.5 rounded text-xs">
+                                    <input type="number" step="1" name="reward" value="{{ c.reward }}" required class="border p-1.5 rounded text-xs">
+                                    <input type="datetime-local" name="due_date" value="{{ c.due_date.strftime('%Y-%m-%dT%H:%M') if c.due_date else '' }}" required class="border p-1.5 rounded text-xs">
+                                    <button type="submit" class="bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold py-1.5 px-3 rounded transition">
+                                        Save Changes
+                                    </button>
+                                </form>
+                            {% endif %}
 
                             {% if c.status == 'Pending Verification' and c.created_by_id == adult.id %}
                                 <form action="/verify_chore/{{ adult.id }}/{{ c.id }}" method="POST" class="pt-3 border-t grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
@@ -726,13 +765,11 @@ def kid_portal(kid):
     penalty_rate = float(get_setting('penalty_percent', '10'))
     now = get_sast_now()
 
-    # Pre-calculate flags in Python
     for c in uncompleted_chores:
         c.is_overdue = bool(c.due_date and now > (c.due_date + timedelta(hours=penalty_grace_hours)))
         c.discounted_reward = c.reward - (c.reward * penalty_rate / 100.0)
 
     for c in my_chores:
-        # A release is ONLY free if within release hours AND the task deadline has not passed yet
         deadline_passed = bool(c.due_date and now > (c.due_date + timedelta(hours=penalty_grace_hours)))
         within_buffer = bool(c.claimed_at and (now - c.claimed_at).total_seconds() < (release_hours * 3600))
         c.is_within_buffer = within_buffer and (not deadline_passed)
@@ -923,18 +960,67 @@ def post_chore(adult_id):
     except ValueError:
         reward = 0
 
-    due_date = None
+    repeat_every = int(request.form.get('repeat_every', 1))
+    repeat_unit = request.form.get('repeat_unit', 'days')
+    repeat_count = int(request.form.get('repeat_count', 1))
+
+    base_due_date = None
     if due_date_raw:
         try:
-            due_date = datetime.strptime(due_date_raw, '%Y-%m-%dT%H:%M')
+            base_due_date = datetime.strptime(due_date_raw, '%Y-%m-%dT%H:%M')
         except ValueError:
-            due_date = None
+            base_due_date = None
 
     if title and reward > 0:
-        chore = Chore(title=title, reward=reward, due_date=due_date, created_by_id=adult_id, status='Open')
-        db.session.add(chore)
+        delta = timedelta(days=0)
+        if repeat_unit == 'minutes':
+            delta = timedelta(minutes=repeat_every)
+        elif repeat_unit == 'hours':
+            delta = timedelta(hours=repeat_every)
+        elif repeat_unit == 'days':
+            delta = timedelta(days=repeat_every)
+
+        for i in range(max(1, repeat_count)):
+            instance_due = base_due_date + (delta * i) if base_due_date else None
+            chore = Chore(title=title, reward=reward, due_date=instance_due, created_by_id=adult_id, status='Open')
+            db.session.add(chore)
+        
         db.session.commit()
-        flash("Chore posted successfully!", "success")
+        flash(f"Successfully posted {max(1, repeat_count)} chore instance(s)!", "success")
+    return redirect(url_for('dashboard', user_id=adult_id))
+
+
+@app.route('/edit_chore/<int:adult_id>/<int:chore_id>', methods=['POST'])
+def edit_chore(adult_id, chore_id):
+    chore = Chore.query.get_or_404(chore_id)
+    if chore.status == 'Open' and (session.get('user_role') == 'parent' or chore.created_by_id == adult_id):
+        chore.title = request.form.get('title', chore.title).strip()
+        try:
+            chore.reward = float(request.form.get('reward', chore.reward))
+        except ValueError:
+            pass
+        due_date_raw = request.form.get('due_date', '').strip()
+        if due_date_raw:
+            try:
+                chore.due_date = datetime.strptime(due_date_raw, '%Y-%m-%dT%H:%M')
+            except ValueError:
+                pass
+        db.session.commit()
+        flash("Chore updated successfully!", "success")
+    else:
+        flash("Cannot edit a chore that has already been claimed.", "error")
+    return redirect(url_for('dashboard', user_id=adult_id))
+
+
+@app.route('/delete_chore/<int:adult_id>/<int:chore_id>', methods=['POST'])
+def delete_chore(adult_id, chore_id):
+    chore = Chore.query.get_or_404(chore_id)
+    if chore.status == 'Open' and (session.get('user_role') == 'parent' or chore.created_by_id == adult_id):
+        db.session.delete(chore)
+        db.session.commit()
+        flash("Chore deleted successfully.", "success")
+    else:
+        flash("Cannot delete a chore that has already been claimed.", "error")
     return redirect(url_for('dashboard', user_id=adult_id))
 
 
@@ -1094,7 +1180,7 @@ def confirm_payment(kid_id, ledger_id):
         ledger.status = 'Settled'
         db.session.commit()
         flash("Payment receipt confirmed! Ledger updated.", "success")
-    return redirect(url_for('dashboard', kid_id))
+    return redirect(url_for('dashboard', user_id=kid_id))
 
 
 with app.app_context():
