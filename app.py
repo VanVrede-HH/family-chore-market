@@ -408,16 +408,22 @@ def adult_portal(adult):
     kids = User.query.filter_by(role='kid').all()
     all_users = User.query.all()
     
-    # Sort active chores by due_date ascending (earliest first)
+    # Base query for uncompleted chores sorted by due date ascending
     if adult.role == 'parent':
-        uncompleted_chores = Chore.query.filter(
+        all_active_chores = Chore.query.filter(
             Chore.status.in_(['Open', 'Claimed', 'Pending Verification'])
         ).order_by(Chore.due_date.asc()).all()
     else:
-        uncompleted_chores = Chore.query.filter(
+        all_active_chores = Chore.query.filter(
             Chore.created_by_id == adult.id, 
             Chore.status.in_(['Open', 'Claimed', 'Pending Verification'])
         ).order_by(Chore.due_date.asc()).all()
+
+    # Split into Action Required (Claimed & Pending Verification) vs Open Chores
+    # Place Pending Verification first, then Claimed
+    action_chores = [c for c in all_active_chores if c.status == 'Pending Verification'] + \
+                    [c for c in all_active_chores if c.status == 'Claimed']
+    open_chores = [c for c in all_active_chores if c.status == 'Open']
 
     ledgers = Ledger.query.filter_by(adult_id=adult.id).all()
 
@@ -429,7 +435,7 @@ def adult_portal(adult):
     now = get_sast_now()
 
     chore_calcs = {}
-    for c in uncompleted_chores:
+    for c in action_chores:
         if c.status == 'Pending Verification':
             suggested_reward = c.reward
             suggested_penalty = 0.0
@@ -504,15 +510,18 @@ def adult_portal(adult):
             </form>
         </div>
 
-        <!-- 3. Uncompleted & Active Chores (Sorted by Earliest Due Date) -->
-        <div class="bg-white p-6 rounded-xl shadow-md">
-            <h3 class="font-bold text-slate-800 text-lg mb-3">
-                📋 Active & Uncompleted Chores {% if adult.role == 'parent' %}(All Household){% else %}(Posted by You){% endif %}
+        <!-- 3. Pending Verification & Claimed Active Chores Section -->
+        <div class="bg-white p-6 rounded-xl shadow-md border-t-4 border-amber-500">
+            <h3 class="font-bold text-slate-800 text-lg mb-1 flex items-center justify-between">
+                <span>⏳ Pending Verification & Active Claimed Chores</span>
+                <span class="text-xs bg-amber-100 text-amber-800 px-2.5 py-0.5 rounded-full font-bold">{{ action_chores|length }}</span>
             </h3>
-            {% if uncompleted_chores %}
+            <p class="text-xs text-slate-500 mb-4">Chores needing verification appear at the top. Claimed chores can be force-released below.</p>
+            
+            {% if action_chores %}
                 <div class="space-y-4">
-                    {% for c in uncompleted_chores %}
-                        <div class="border p-4 rounded-lg bg-slate-50 space-y-3">
+                    {% for c in action_chores %}
+                        <div class="border p-4 rounded-lg {% if c.status == 'Pending Verification' %}bg-amber-50 border-amber-300{% else %}bg-slate-50{% endif %} space-y-3">
                             <div class="flex justify-between items-start">
                                 <div>
                                     <h4 class="font-bold text-slate-800 text-base">{{ c.title }}</h4>
@@ -520,43 +529,25 @@ def adult_portal(adult):
                                         Funder: <strong>{{ c.creator.name }}</strong> | Original Reward: R{{ "%.2f"|format(c.reward) }}<br>
                                         Due: {{ c.due_date.strftime('%a %H:%M') if c.due_date else 'No deadline' }} | 
                                         Done At: {{ c.completed_at.strftime('%a %H:%M') if c.completed_at else 'N/A' }}<br>
-                                        Assignee: <strong>{{ c.assignee.name if c.assignee else 'Unassigned' }}</strong> | Status: <strong class="text-indigo-600">{{ c.status }}</strong>
+                                        Assignee: <strong>{{ c.assignee.name if c.assignee else 'Unassigned' }}</strong> | Status: <strong class="{% if c.status == 'Pending Verification' %}text-amber-700{% else %}text-indigo-600{% endif %}">{{ c.status }}</strong>
                                     </p>
                                 </div>
                                 <div class="flex items-center gap-2">
                                     {% if c.status == 'Claimed' and (adult.role == 'parent' or c.created_by_id == adult.id) %}
-                                        <form action="/force_release_chore/{{ adult.id }}/{{ c.id }}" method="POST" onsubmit="return confirm('Release this chore and apply penalty to assignee?');">
+                                        <form action="/force_release_chore/{{ adult.id }}/{{ c.id }}" method="POST" onsubmit="return confirm('Release this chore? Penalty applies only if past deadline.');">
                                             <button type="submit" class="bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold px-3 py-1.5 rounded transition">
                                                 Force Release
                                             </button>
                                         </form>
                                     {% endif %}
-                                    {% if c.status == 'Open' and (adult.role == 'parent' or c.created_by_id == adult.id) %}
-                                        <form action="/delete_chore/{{ adult.id }}/{{ c.id }}" method="POST" onsubmit="return confirm('Delete this open chore?');">
-                                            <button type="submit" class="bg-red-500 hover:bg-red-600 text-white text-xs font-bold px-3 py-1.5 rounded transition">
-                                                Delete
-                                            </button>
-                                        </form>
-                                    {% endif %}
-                                    <span class="px-2.5 py-1 text-xs rounded-full font-bold bg-slate-200 text-slate-700">
+                                    <span class="px-2.5 py-1 text-xs rounded-full font-bold {% if c.status == 'Pending Verification' %}bg-amber-200 text-amber-800{% else %}bg-indigo-100 text-indigo-700{% endif %}">
                                         {{ c.status }}
                                     </span>
                                 </div>
                             </div>
 
-                            {% if c.status == 'Open' and (adult.role == 'parent' or c.created_by_id == adult.id) %}
-                                <form action="/edit_chore/{{ adult.id }}/{{ c.id }}" method="POST" class="pt-3 border-t grid grid-cols-1 sm:grid-cols-4 gap-2 items-end">
-                                    <input type="text" name="title" value="{{ c.title }}" required class="border p-1.5 rounded text-xs">
-                                    <input type="number" step="1" name="reward" value="{{ c.reward }}" required class="border p-1.5 rounded text-xs">
-                                    <input type="datetime-local" name="due_date" value="{{ c.due_date.strftime('%Y-%m-%dT%H:%M') if c.due_date else '' }}" required class="border p-1.5 rounded text-xs">
-                                    <button type="submit" class="bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold py-1.5 px-3 rounded transition">
-                                        Save Changes
-                                    </button>
-                                </form>
-                            {% endif %}
-
-                            {% if c.status == 'Pending Verification' and c.created_by_id == adult.id %}
-                                <form action="/verify_chore/{{ adult.id }}/{{ c.id }}" method="POST" class="pt-3 border-t grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+                            {% if c.status == 'Pending Verification' and (adult.role == 'parent' or c.created_by_id == adult.id) %}
+                                <form action="/verify_chore/{{ adult.id }}/{{ c.id }}" method="POST" class="pt-3 border-t border-amber-200 grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
                                     <div>
                                         <label class="block text-xs font-semibold text-slate-600 mb-1">Final Payout (R)</label>
                                         <input type="number" step="0.01" name="final_reward" value="{{ chore_calcs[c.id].reward }}" required
@@ -578,11 +569,63 @@ def adult_portal(adult):
                     {% endfor %}
                 </div>
             {% else %}
-                <p class="text-slate-500 text-sm italic">No uncompleted chores right now.</p>
+                <p class="text-slate-500 text-sm italic">No chores pending verification or active claims right now.</p>
             {% endif %}
         </div>
 
-        <!-- 4. Kid Ledgers & Payouts (with step="any" fix for manual override) -->
+        <!-- 4. Open Household / Posted Chores -->
+        <div class="bg-white p-6 rounded-xl shadow-md">
+            <h3 class="font-bold text-slate-800 text-lg mb-1 flex items-center justify-between">
+                <span>📋 Open Market Chores</span>
+                <span class="text-xs bg-slate-100 text-slate-700 px-2.5 py-0.5 rounded-full font-bold">{{ open_chores|length }}</span>
+            </h3>
+            <p class="text-xs text-slate-500 mb-4">Available for kids to claim (Sorted by earliest due date).</p>
+            
+            {% if open_chores %}
+                <div class="space-y-4">
+                    {% for c in open_chores %}
+                        <div class="border p-4 rounded-lg bg-slate-50 space-y-3">
+                            <div class="flex justify-between items-start">
+                                <div>
+                                    <h4 class="font-bold text-slate-800 text-base">{{ c.title }}</h4>
+                                    <p class="text-xs text-slate-500">
+                                        Funder: <strong>{{ c.creator.name }}</strong> | Reward: <strong class="text-emerald-600">R{{ "%.2f"|format(c.reward) }}</strong><br>
+                                        Due: {{ c.due_date.strftime('%a %H:%M') if c.due_date else 'No deadline' }} | Status: <strong class="text-indigo-600">Open</strong>
+                                    </p>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    {% if adult.role == 'parent' or c.created_by_id == adult.id %}
+                                        <form action="/delete_chore/{{ adult.id }}/{{ c.id }}" method="POST" onsubmit="return confirm('Delete this open chore?');">
+                                            <button type="submit" class="bg-red-500 hover:bg-red-600 text-white text-xs font-bold px-3 py-1.5 rounded transition">
+                                                Delete
+                                            </button>
+                                        </form>
+                                    {% endif %}
+                                    <span class="px-2.5 py-1 text-xs rounded-full font-bold bg-green-100 text-green-700">
+                                        Open
+                                    </span>
+                                </div>
+                            </div>
+
+                            {% if adult.role == 'parent' or c.created_by_id == adult.id %}
+                                <form action="/edit_chore/{{ adult.id }}/{{ c.id }}" method="POST" class="pt-3 border-t grid grid-cols-1 sm:grid-cols-4 gap-2 items-end">
+                                    <input type="text" name="title" value="{{ c.title }}" required class="border p-1.5 rounded text-xs">
+                                    <input type="number" step="1" name="reward" value="{{ c.reward }}" required class="border p-1.5 rounded text-xs">
+                                    <input type="datetime-local" name="due_date" value="{{ c.due_date.strftime('%Y-%m-%dT%H:%M') if c.due_date else '' }}" required class="border p-1.5 rounded text-xs">
+                                    <button type="submit" class="bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold py-1.5 px-3 rounded transition">
+                                        Save Changes
+                                    </button>
+                                </form>
+                            {% endif %}
+                        </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <p class="text-slate-500 text-sm italic">No open chores right now.</p>
+            {% endif %}
+        </div>
+
+        <!-- 5. Kid Ledgers & Payouts -->
         <div class="bg-white p-6 rounded-xl shadow-md">
             <h3 class="font-bold text-slate-800 text-lg mb-3">💰 Kid Ledgers, Payouts & Pocket Money Loans</h3>
             {% if ledgers %}
@@ -626,7 +669,7 @@ def adult_portal(adult):
             {% endif %}
         </div>
 
-        <!-- 5. Platform Variables & Settings (Admin Section) -->
+        <!-- 6. Platform Variables & Settings (Admin Section) -->
         {% if adult.role == 'parent' %}
         <div class="bg-white p-6 rounded-xl shadow-md border border-indigo-100">
             <h3 class="font-bold text-slate-800 text-lg mb-2">⚙️ Platform Variables, Penalties & Loan Interest</h3>
@@ -659,7 +702,7 @@ def adult_portal(adult):
             </form>
         </div>
 
-        <!-- 6. Data Backup & Recovery -->
+        <!-- 7. Data Backup & Recovery -->
         <div class="bg-white p-6 rounded-xl shadow-md border border-indigo-100">
             <h3 class="font-bold text-slate-800 text-lg mb-2">💾 Data Backup & Recovery</h3>
             <p class="text-slate-500 text-sm mb-4">Download a local JSON backup, restore from a backup file, or share your ledger summary via email.</p>
@@ -679,7 +722,7 @@ def adult_portal(adult):
             </form>
         </div>
 
-        <!-- 7. Add Family Member -->
+        <!-- 8. Add Family Member -->
         <div class="bg-white p-6 rounded-xl shadow-md">
             <h3 class="font-bold text-slate-800 text-lg mb-3">➕ Add Family Member</h3>
             <form action="/add_user" method="POST" class="grid grid-cols-1 sm:grid-cols-4 gap-3">
@@ -698,7 +741,7 @@ def adult_portal(adult):
             </form>
         </div>
 
-        <!-- 8. Manage Household PINs -->
+        <!-- 9. Manage Household PINs -->
         <div class="bg-white p-6 rounded-xl shadow-md">
             <h3 class="font-bold text-slate-800 text-lg mb-3">🔑 Manage Household PINs</h3>
             <div class="divide-y">
@@ -731,7 +774,7 @@ def adult_portal(adult):
         </div>
         {% endif %}
 
-        <!-- 9. Audit Log -->
+        <!-- 10. Audit Log -->
         <div class="bg-white p-6 rounded-xl shadow-md">
             <div class="flex flex-col sm:flex-row justify-between items-center mb-4 gap-3">
                 <h3 class="font-bold text-slate-800 text-lg">📜 Verified Chores Audit Log</h3>
@@ -764,16 +807,21 @@ def adult_portal(adult):
         </div>
     </div>
     """
-    return render_page(html, adult=adult, kids=kids, all_users=all_users, uncompleted_chores=uncompleted_chores, ledgers=ledgers, release_hours=release_hours, leaderboard_days=leaderboard_days, penalty_grace_hours=penalty_grace_hours, penalty_percent=penalty_percent, audit_chores=audit_chores, filter_period=filter_period, ledger_text=ledger_text, chore_calcs=chore_calcs)
+    return render_page(html, adult=adult, kids=kids, all_users=all_users, action_chores=action_chores, open_chores=open_chores, ledgers=ledgers, release_hours=release_hours, leaderboard_days=leaderboard_days, penalty_grace_hours=penalty_grace_hours, penalty_percent=penalty_percent, audit_chores=audit_chores, filter_period=filter_period, ledger_text=ledger_text, chore_calcs=chore_calcs)
 
 
 def kid_portal(kid):
-    # Sort uncompleted household chores by due date ascending (earliest first)
-    uncompleted_chores = Chore.query.filter(
+    # Fetch all non-completed active household chores sorted by due date ascending (Market view)
+    all_active_chores = Chore.query.filter(
         Chore.status.in_(['Open', 'Claimed', 'Pending Verification'])
     ).order_by(Chore.due_date.asc()).all()
 
-    my_chores = Chore.query.filter_by(assigned_to_id=kid.id).order_by(Chore.due_date.asc()).all()
+    # Dedicated list for chores claimed by THIS kid
+    my_chores = Chore.query.filter(
+        Chore.assigned_to_id == kid.id,
+        Chore.status.in_(['Claimed', 'Pending Verification'])
+    ).order_by(Chore.due_date.asc()).all()
+
     ledgers = Ledger.query.filter_by(kid_id=kid.id).all()
     penalty_logs = PenaltyLog.query.filter_by(kid_id=kid.id).order_by(PenaltyLog.created_at.desc()).all()
     
@@ -784,14 +832,12 @@ def kid_portal(kid):
     penalty_rate = float(get_setting('penalty_percent', '10'))
     now = get_sast_now()
 
-    for c in uncompleted_chores:
+    for c in all_active_chores:
         c.is_overdue = bool(c.due_date and now > (c.due_date + timedelta(hours=penalty_grace_hours)))
         c.discounted_reward = c.reward - (c.reward * penalty_rate / 100.0)
 
     for c in my_chores:
-        deadline_passed = bool(c.due_date and now > (c.due_date + timedelta(hours=penalty_grace_hours)))
-        within_buffer = bool(c.claimed_at and (now - c.claimed_at).total_seconds() < (release_hours * 3600))
-        c.is_within_buffer = within_buffer and (not deadline_passed)
+        c.is_overdue = bool(c.due_date and now > (c.due_date + timedelta(hours=penalty_grace_hours)))
 
     html = """
     <div class="space-y-6">
@@ -823,17 +869,27 @@ def kid_portal(kid):
             {% endif %}
         {% endfor %}
 
-        <!-- 3. My Claimed Chores -->
-        <div class="bg-white p-6 rounded-xl shadow-md">
-            <h3 class="font-bold text-slate-800 text-lg mb-3">📌 My Claimed Chores</h3>
+        <!-- 3. Dedicated Section: My Claimed Chores (Action Area) -->
+        <div class="bg-white p-6 rounded-xl shadow-md border-t-4 border-emerald-500">
+            <h3 class="font-bold text-slate-800 text-lg mb-1 flex items-center justify-between">
+                <span>📌 My Claimed Chores</span>
+                <span class="text-xs bg-emerald-100 text-emerald-800 px-2.5 py-0.5 rounded-full font-bold">{{ my_chores|length }}</span>
+            </h3>
+            <p class="text-xs text-slate-500 mb-4">Manage tasks you are currently working on.</p>
+
             {% if my_chores %}
                 <div class="space-y-3">
                     {% for c in my_chores %}
-                        <div class="border p-3 rounded-lg flex justify-between items-center">
+                        <div class="border p-3 rounded-lg flex justify-between items-center bg-emerald-50/50">
                             <div>
-                                <h4 class="font-bold text-slate-800">{{ c.title }}</h4>
+                                <h4 class="font-bold text-slate-800">
+                                    {{ c.title }}
+                                    {% if c.is_overdue %}
+                                        <span class="ml-1 bg-red-100 text-red-700 text-2xs px-2 py-0.5 rounded font-bold">LATE</span>
+                                    {% endif %}
+                                </h4>
                                 <p class="text-xs text-slate-500">
-                                    Funder: {{ c.creator.name }} | R{{ "%.2f"|format(c.reward) }} | 
+                                    Funder: <strong>{{ c.creator.name }}</strong> | Reward: <strong class="text-emerald-600">R{{ "%.2f"|format(c.reward) }}</strong> | 
                                     Due: {{ c.due_date.strftime('%a %H:%M') if c.due_date else 'Flexible' }}
                                 </p>
                             </div>
@@ -844,16 +900,14 @@ def kid_portal(kid):
                                             Mark Done
                                         </button>
                                     </form>
-                                    <form action="/release_chore/{{ kid.id }}/{{ c.id }}" method="POST" onsubmit="return confirm('Releasing this chore will deduct a penalty from your ledger balance. Proceed?');">
-                                        <button type="submit" class="bg-red-500 hover:bg-red-600 text-white text-xs font-bold px-3 py-1.5 rounded transition" title="Release chore and incur penalty">
-                                            {% if c.is_within_buffer %}Release (Free){% else %}Release (Penalty){% endif %}
+                                    <form action="/release_chore/{{ kid.id }}/{{ c.id }}" method="POST" onsubmit="return confirm('Release this chore back to the market?');">
+                                        <button type="submit" class="bg-red-500 hover:bg-red-600 text-white text-xs font-bold px-3 py-1.5 rounded transition" title="Release chore back to open market">
+                                            {% if c.is_overdue %}Release (Penalty){% else %}Release (Free){% endif %}
                                         </button>
                                     </form>
                                 {% else %}
-                                    <span class="px-2.5 py-1 text-xs rounded-full font-bold
-                                        {% if c.status == 'Pending Verification' %}bg-amber-100 text-amber-700
-                                        {% else %}bg-green-100 text-green-700{% endif %}">
-                                        {{ c.status }}
+                                    <span class="px-2.5 py-1 text-xs rounded-full font-bold bg-amber-100 text-amber-700">
+                                        Pending Verification
                                     </span>
                                 {% endif %}
                             </div>
@@ -861,16 +915,21 @@ def kid_portal(kid):
                     {% endfor %}
                 </div>
             {% else %}
-                <p class="text-slate-500 text-sm italic">You haven't claimed any chores yet.</p>
+                <p class="text-slate-500 text-sm italic">You don't have any active claimed chores right now.</p>
             {% endif %}
         </div>
 
-        <!-- 4. All Uncompleted Household Chores (Sorted by Earliest Due Date) -->
+        <!-- 4. General Household Chore Market (All Active Chores) -->
         <div class="bg-white p-6 rounded-xl shadow-md">
-            <h3 class="font-bold text-slate-800 text-lg mb-3">🛒 All Uncompleted Household Chores</h3>
-            {% if uncompleted_chores %}
+            <h3 class="font-bold text-slate-800 text-lg mb-1 flex items-center justify-between">
+                <span>🛒 All Active Household Chores</span>
+                <span class="text-xs bg-slate-100 text-slate-700 px-2.5 py-0.5 rounded-full font-bold">{{ all_active_chores|length }}</span>
+            </h3>
+            <p class="text-xs text-slate-500 mb-4">View open chores and claimed tasks across the household (Sorted by earliest due date).</p>
+
+            {% if all_active_chores %}
                 <div class="space-y-3">
-                    {% for c in uncompleted_chores %}
+                    {% for c in all_active_chores %}
                         <div class="border p-3 rounded-lg flex justify-between items-center">
                             <div>
                                 <h4 class="font-bold text-slate-800">
@@ -897,7 +956,7 @@ def kid_portal(kid):
                                 {% if c.status == 'Open' %}
                                     {% if c.created_by_id in locked_adult_ids %}
                                         <span class="text-xs font-bold text-red-500 bg-red-50 px-2.5 py-1 rounded" title="Confirm pending payment from this specific funder first">
-                                            Blocked (Confirm Payment)
+                                            Blocked
                                         </span>
                                     {% else %}
                                         <form action="/claim_chore/{{ kid.id }}/{{ c.id }}" method="POST">
@@ -906,10 +965,10 @@ def kid_portal(kid):
                                             </button>
                                         </form>
                                     {% endif %}
-                                {% elif c.status == 'Claimed' and c.assigned_to_id == kid.id %}
-                                    <span class="text-xs text-slate-400">Claimed</span>
+                                {% elif c.assigned_to_id == kid.id %}
+                                    <span class="text-xs text-emerald-600 font-bold bg-emerald-50 px-2.5 py-1 rounded">My Chore</span>
                                 {% else %}
-                                    <span class="text-xs text-slate-400">{{ c.status }}</span>
+                                    <span class="text-xs text-slate-400 font-medium px-2.5 py-1 bg-slate-100 rounded">{{ c.status }}</span>
                                 {% endif %}
                             </div>
                         </div>
@@ -955,7 +1014,7 @@ def kid_portal(kid):
         {% if penalty_logs %}
         <div class="bg-red-50 border-l-4 border-red-500 p-6 rounded-r-xl shadow-md">
             <h3 class="font-bold text-red-800 text-lg mb-2">⚠️ Penalty / Release Log</h3>
-            <p class="text-xs text-red-600 mb-3">Penalties applied to your ledger balance for released or overdue chores:</p>
+            <p class="text-xs text-red-600 mb-3">Penalties applied to your ledger balance for overdue releases:</p>
             <div class="divide-y divide-red-200 text-xs">
                 {% for pl in penalty_logs %}
                     <div class="py-2 flex justify-between items-center">
@@ -974,7 +1033,7 @@ def kid_portal(kid):
         {% endif %}
     </div>
     """
-    return render_page(html, kid=kid, uncompleted_chores=uncompleted_chores, my_chores=my_chores, ledgers=ledgers, locked_adult_ids=locked_adult_ids, release_hours=release_hours, now=now, penalty_logs=penalty_logs)
+    return render_page(html, kid=kid, all_active_chores=all_active_chores, my_chores=my_chores, ledgers=ledgers, locked_adult_ids=locked_adult_ids, release_hours=release_hours, now=now, penalty_logs=penalty_logs)
 
 
 @app.route('/post_chore/<int:adult_id>', methods=['POST'])
@@ -1079,23 +1138,15 @@ def claim_chore(kid_id, chore_id):
 @app.route('/release_chore/<int:kid_id>/<int:chore_id>', methods=['POST'])
 def release_chore(kid_id, chore_id):
     chore = Chore.query.get_or_404(chore_id)
-    release_hours = float(get_setting('release_hours', '1'))
     penalty_grace_hours = float(get_setting('penalty_grace_hours', '0'))
     penalty_rate = float(get_setting('penalty_percent', '10'))
     now = get_sast_now()
 
     if chore.assigned_to_id == kid_id and chore.status == 'Claimed':
-        deadline_passed = bool(chore.due_date and now > (chore.due_date + timedelta(hours=penalty_grace_hours)))
-        within_buffer = bool(chore.claimed_at and (now - chore.claimed_at).total_seconds() < (release_hours * 3600))
-        is_within_buffer = within_buffer and (not deadline_passed)
+        # Check if deadline + grace period has passed
+        is_overdue = bool(chore.due_date and now > (chore.due_date + timedelta(hours=penalty_grace_hours)))
         
-        if is_within_buffer:
-            chore.assigned_to_id = None
-            chore.status = 'Open'
-            chore.claimed_at = None
-            db.session.commit()
-            flash("Chore released back to open market without penalty.", "success")
-        else:
+        if is_overdue:
             penalty_amt = round(chore.reward * (penalty_rate / 100.0), 2)
             ledger = get_or_create_ledger(adult_id=chore.created_by_id, kid_id=kid_id)
             ledger.amount_due -= penalty_amt
@@ -1105,7 +1156,7 @@ def release_chore(kid_id, chore_id):
                 adult_id=chore.created_by_id,
                 chore_title=chore.title,
                 penalty_amount=penalty_amt,
-                reason="Released claimed chore past deadline or grace buffer.",
+                reason="Released claimed chore after due date deadline.",
                 created_at=now
             )
             db.session.add(log)
@@ -1114,7 +1165,13 @@ def release_chore(kid_id, chore_id):
             chore.status = 'Open'
             chore.claimed_at = None
             db.session.commit()
-            flash(f"Chore released. Penalty of R{penalty_amt:.2f} applied to your ledger balance.", "success")
+            flash(f"Chore released. Penalty of R{penalty_amt:.2f} applied for releasing after deadline.", "success")
+        else:
+            chore.assigned_to_id = None
+            chore.status = 'Open'
+            chore.claimed_at = None
+            db.session.commit()
+            flash("Chore released back to open market without penalty.", "success")
 
     return redirect(url_for('dashboard', user_id=kid_id))
 
@@ -1122,31 +1179,40 @@ def release_chore(kid_id, chore_id):
 @app.route('/force_release_chore/<int:adult_id>/<int:chore_id>', methods=['POST'])
 def force_release_chore(adult_id, chore_id):
     chore = Chore.query.get_or_404(chore_id)
+    penalty_grace_hours = float(get_setting('penalty_grace_hours', '0'))
     penalty_rate = float(get_setting('penalty_percent', '10'))
     now = get_sast_now()
 
     if chore.status == 'Claimed' and chore.assigned_to_id:
         kid_id = chore.assigned_to_id
-        penalty_amt = round(chore.reward * (penalty_rate / 100.0), 2)
-        
-        ledger = get_or_create_ledger(adult_id=chore.created_by_id, kid_id=kid_id)
-        ledger.amount_due -= penalty_amt
+        is_overdue = bool(chore.due_date and now > (chore.due_date + timedelta(hours=penalty_grace_hours)))
 
-        log = PenaltyLog(
-            kid_id=kid_id,
-            adult_id=chore.created_by_id,
-            chore_title=chore.title,
-            penalty_amount=penalty_amt,
-            reason="Force-released by adult/parent.",
-            created_at=now
-        )
-        db.session.add(log)
+        if is_overdue:
+            penalty_amt = round(chore.reward * (penalty_rate / 100.0), 2)
+            ledger = get_or_create_ledger(adult_id=chore.created_by_id, kid_id=kid_id)
+            ledger.amount_due -= penalty_amt
 
-        chore.assigned_to_id = None
-        chore.status = 'Open'
-        chore.claimed_at = None
-        db.session.commit()
-        flash(f"Chore force-released. Penalty of R{penalty_amt:.2f} applied to {chore.assignee.name if chore.assignee else 'kid'}'s ledger.", "success")
+            log = PenaltyLog(
+                kid_id=kid_id,
+                adult_id=chore.created_by_id,
+                chore_title=chore.title,
+                penalty_amount=penalty_amt,
+                reason="Force-released after deadline by adult/parent.",
+                created_at=now
+            )
+            db.session.add(log)
+
+            chore.assigned_to_id = None
+            chore.status = 'Open'
+            chore.claimed_at = None
+            db.session.commit()
+            flash(f"Chore force-released. Penalty of R{penalty_amt:.2f} applied to {chore.assignee.name if chore.assignee else 'kid'}'s ledger (overdue).", "success")
+        else:
+            chore.assigned_to_id = None
+            chore.status = 'Open'
+            chore.claimed_at = None
+            db.session.commit()
+            flash(f"Chore force-released back to open market without penalty.", "success")
 
     return redirect(url_for('dashboard', user_id=adult_id))
 
@@ -1165,7 +1231,7 @@ def complete_chore(kid_id, chore_id):
 @app.route('/verify_chore/<int:adult_id>/<int:chore_id>', methods=['POST'])
 def verify_chore(adult_id, chore_id):
     chore = Chore.query.get_or_404(chore_id)
-    if chore.created_by_id == adult_id and chore.status == 'Pending Verification':
+    if (session.get('user_role') == 'parent' or chore.created_by_id == adult_id) and chore.status == 'Pending Verification':
         try:
             final_reward = float(request.form.get('final_reward', chore.reward))
             penalty_applied = float(request.form.get('penalty_applied', 0.0))
@@ -1175,7 +1241,7 @@ def verify_chore(adult_id, chore_id):
 
         chore.status = 'Completed'
 
-        ledger = get_or_create_ledger(adult_id=adult_id, kid_id=chore.assignee.id)
+        ledger = get_or_create_ledger(adult_id=chore.created_by_id, kid_id=chore.assignee.id)
         ledger.amount_due += final_reward
         db.session.commit()
         
