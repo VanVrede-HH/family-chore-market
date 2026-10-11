@@ -408,10 +408,16 @@ def adult_portal(adult):
     kids = User.query.filter_by(role='kid').all()
     all_users = User.query.all()
     
+    # Sort active chores by due_date ascending (earliest first)
     if adult.role == 'parent':
-        uncompleted_chores = Chore.query.filter(Chore.status.in_(['Open', 'Claimed', 'Pending Verification'])).all()
+        uncompleted_chores = Chore.query.filter(
+            Chore.status.in_(['Open', 'Claimed', 'Pending Verification'])
+        ).order_by(Chore.due_date.asc()).all()
     else:
-        uncompleted_chores = Chore.query.filter(Chore.created_by_id == adult.id, Chore.status.in_(['Open', 'Claimed', 'Pending Verification'])).all()
+        uncompleted_chores = Chore.query.filter(
+            Chore.created_by_id == adult.id, 
+            Chore.status.in_(['Open', 'Claimed', 'Pending Verification'])
+        ).order_by(Chore.due_date.asc()).all()
 
     ledgers = Ledger.query.filter_by(adult_id=adult.id).all()
 
@@ -498,7 +504,7 @@ def adult_portal(adult):
             </form>
         </div>
 
-        <!-- 3. Uncompleted & Active Chores -->
+        <!-- 3. Uncompleted & Active Chores (Sorted by Earliest Due Date) -->
         <div class="bg-white p-6 rounded-xl shadow-md">
             <h3 class="font-bold text-slate-800 text-lg mb-3">
                 📋 Active & Uncompleted Chores {% if adult.role == 'parent' %}(All Household){% else %}(Posted by You){% endif %}
@@ -576,7 +582,7 @@ def adult_portal(adult):
             {% endif %}
         </div>
 
-        <!-- 4. Kid Ledgers & Payouts -->
+        <!-- 4. Kid Ledgers & Payouts (with step="any" fix for manual override) -->
         <div class="bg-white p-6 rounded-xl shadow-md">
             <h3 class="font-bold text-slate-800 text-lg mb-3">💰 Kid Ledgers, Payouts & Pocket Money Loans</h3>
             {% if ledgers %}
@@ -590,7 +596,7 @@ def adult_portal(adult):
                                 </div>
                                 <form action="/adjust_ledger/{{ l.id }}" method="POST" class="mt-1 flex items-center gap-2">
                                     <span class="text-xs text-slate-500">Manual Override R:</span>
-                                    <input type="number" step="1" name="amount_due" value="{{ l.amount_due }}" 
+                                    <input type="number" step="any" name="amount_due" value="{{ l.amount_due }}" 
                                            class="border border-slate-300 p-1 text-xs rounded w-24 focus:outline-none focus:ring-1 focus:ring-indigo-500">
                                     <button type="submit" class="bg-slate-700 hover:bg-slate-800 text-white text-xs px-2.5 py-1 rounded transition">
                                         Set Balance
@@ -725,7 +731,7 @@ def adult_portal(adult):
         </div>
         {% endif %}
 
-        <!-- 9. Audit Log (Moved to the very end) -->
+        <!-- 9. Audit Log -->
         <div class="bg-white p-6 rounded-xl shadow-md">
             <div class="flex flex-col sm:flex-row justify-between items-center mb-4 gap-3">
                 <h3 class="font-bold text-slate-800 text-lg">📜 Verified Chores Audit Log</h3>
@@ -762,8 +768,12 @@ def adult_portal(adult):
 
 
 def kid_portal(kid):
-    uncompleted_chores = Chore.query.filter(Chore.status.in_(['Open', 'Claimed', 'Pending Verification'])).all()
-    my_chores = Chore.query.filter_by(assigned_to_id=kid.id).all()
+    # Sort uncompleted household chores by due date ascending (earliest first)
+    uncompleted_chores = Chore.query.filter(
+        Chore.status.in_(['Open', 'Claimed', 'Pending Verification'])
+    ).order_by(Chore.due_date.asc()).all()
+
+    my_chores = Chore.query.filter_by(assigned_to_id=kid.id).order_by(Chore.due_date.asc()).all()
     ledgers = Ledger.query.filter_by(kid_id=kid.id).all()
     penalty_logs = PenaltyLog.query.filter_by(kid_id=kid.id).order_by(PenaltyLog.created_at.desc()).all()
     
@@ -855,7 +865,7 @@ def kid_portal(kid):
             {% endif %}
         </div>
 
-        <!-- 4. All Uncompleted Household Chores -->
+        <!-- 4. All Uncompleted Household Chores (Sorted by Earliest Due Date) -->
         <div class="bg-white p-6 rounded-xl shadow-md">
             <h3 class="font-bold text-slate-800 text-lg mb-3">🛒 All Uncompleted Household Chores</h3>
             {% if uncompleted_chores %}
