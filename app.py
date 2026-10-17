@@ -547,23 +547,33 @@ def adult_portal(adult):
                             </div>
 
                             {% if c.status == 'Pending Verification' and (adult.role == 'parent' or c.created_by_id == adult.id) %}
-                                <form action="/verify_chore/{{ adult.id }}/{{ c.id }}" method="POST" class="pt-3 border-t border-amber-200 grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
-                                    <div>
-                                        <label class="block text-xs font-semibold text-slate-600 mb-1">Final Payout (R)</label>
-                                        <input type="number" step="0.01" name="final_reward" value="{{ chore_calcs[c.id].reward }}" required
-                                               class="border border-slate-300 p-2 rounded-lg w-full text-sm bg-white font-bold text-emerald-600">
+                                <div class="pt-3 border-t border-amber-200 space-y-3">
+                                    <form action="/verify_chore/{{ adult.id }}/{{ c.id }}" method="POST" class="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+                                        <div>
+                                            <label class="block text-xs font-semibold text-slate-600 mb-1">Final Payout (R)</label>
+                                            <input type="number" step="0.01" name="final_reward" value="{{ chore_calcs[c.id].reward }}" required
+                                                   class="border border-slate-300 p-2 rounded-lg w-full text-sm bg-white font-bold text-emerald-600">
+                                        </div>
+                                        <div>
+                                            <label class="block text-xs font-semibold text-slate-600 mb-1">Penalty Applied (R)</label>
+                                            <input type="number" step="0.01" name="penalty_applied" value="{{ chore_calcs[c.id].penalty }}" required
+                                                   class="border border-slate-300 p-2 rounded-lg w-full text-sm bg-white font-semibold text-red-600">
+                                        </div>
+                                        <div>
+                                            <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2.5 px-4 rounded-lg transition shadow-sm">
+                                                Verify & Approve
+                                            </button>
+                                        </div>
+                                    </form>
+                                    
+                                    <div class="flex justify-end">
+                                        <form action="/decline_chore/{{ adult.id }}/{{ c.id }}" method="POST" onsubmit="return confirm('Decline this work and send it back to the kid to re-do?');">
+                                            <button type="submit" class="bg-red-600 hover:bg-red-700 text-white text-xs font-bold py-1.5 px-3 rounded-lg transition shadow-sm">
+                                                ❌ Decline Work (Send back to Claimed)
+                                            </button>
+                                        </form>
                                     </div>
-                                    <div>
-                                        <label class="block text-xs font-semibold text-slate-600 mb-1">Penalty Applied (R)</label>
-                                        <input type="number" step="0.01" name="penalty_applied" value="{{ chore_calcs[c.id].penalty }}" required
-                                               class="border border-slate-300 p-2 rounded-lg w-full text-sm bg-white font-semibold text-red-600">
-                                    </div>
-                                    <div>
-                                        <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2.5 px-4 rounded-lg transition shadow-sm">
-                                            Verify & Approve
-                                        </button>
-                                    </div>
-                                </form>
+                                </div>
                             {% endif %}
                         </div>
                     {% endfor %}
@@ -1241,7 +1251,7 @@ def verify_chore(adult_id, chore_id):
 
         chore.status = 'Completed'
 
-        ledger = get_or_create_ledger(adult_id=chore.created_by_id, kid_id=chore.assignee.id)
+        ledger = get_or_create_ledger(adult_id=adult_id, kid_id=chore.assignee.id)
         ledger.amount_due += final_reward
         db.session.commit()
         
@@ -1250,6 +1260,17 @@ def verify_chore(adult_id, chore_id):
         else:
             flash(f"Chore verified successfully! Credited: R{final_reward:.2f}.", "success")
 
+    return redirect(url_for('dashboard', user_id=adult_id))
+
+
+@app.route('/decline_chore/<int:adult_id>/<int:chore_id>', methods=['POST'])
+def decline_chore(adult_id, chore_id):
+    chore = Chore.query.get_or_404(chore_id)
+    if (session.get('user_role') == 'parent' or chore.created_by_id == adult_id) and chore.status == 'Pending Verification':
+        chore.status = 'Claimed'
+        chore.completed_at = None
+        db.session.commit()
+        flash(f"Work declined for '{chore.title}'. The chore status is set back to Claimed so {chore.assignee.name if chore.assignee else 'the kid'} can finish it.", "error")
     return redirect(url_for('dashboard', user_id=adult_id))
 
 
